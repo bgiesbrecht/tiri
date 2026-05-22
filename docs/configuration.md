@@ -117,6 +117,20 @@ table = "main.tiri.kv_store"
 | `viz_summary` | `VizAgent` | One sentence — fast/cheap model. **MUST NOT be a guardrail-heavy small model in deployments where result rows may contain geopolitical or regulated-domain content** (nation names, financial instruments, controlled substances, sanctioned-entity identifiers, etc). Route to a larger model or a guardrail-free endpoint if in doubt. See `fixme.md` M2 for the real-world observation that motivated this — Databricks' output guardrail on llama-3-1-8b false-flagged `indiscriminate-weapons:true` on benign TPC-H supply-chain rows mentioning IRAN / IRAQ / RUSSIA. VizAgent now degrades to an empty summary on LLM-side failure, but only the larger model avoids the trip-up entirely. |
 | `embed` | `ExampleIndexer`, `ContextBuilder` | Must be an embedding model, not a completion model |
 
+### Room calibration and model switching
+
+A room's `text_instruction`, examples, and sample questions are calibrated against the models configured at the time the room was authored and benchmarked. The routing configuration and the room content are a matched pair.
+
+Switching models after a room is in production is a valid operation, but it is not free. Different models interpret ambiguous questions differently, apply confidence thresholds differently, and produce SQL with different formatting conventions. Concretely:
+
+- **IntentAgent routing rate** — some models are more conservative about routing to `ClarifyAgent` than others. Sonnet 4.6 routes more questions to clarification than llama-3-3-70b for the same prompts and the same `TIRI_INTENT_THRESHOLD` setting. Neither is wrong; they are differently calibrated.
+- **SQL formatting** — some models wrap SQL in markdown fences despite prompt instructions. SQLAgent now strips these, but the prompt template was written for a model that does not fence.
+- **`TIRI_INTENT_THRESHOLD`** — this is a global setting but is effectively a model-specific constant. 0.7 was validated against Databricks llama. Treat it as a tuning parameter when switching models.
+
+**Recommendation:** when switching the model for a room that is already in production, re-run the room's benchmarks before deploying. If the score drops, iterate on `text_instruction` or add worked examples rather than adjusting the threshold globally — the threshold change will affect all rooms.
+
+This is a deliberate tradeoff. Multi-model routing provides vendor flexibility and cost optimisation, but it places the calibration responsibility on the room author rather than on the platform. Operators who prefer predictability over flexibility should route all tasks to a single, stable model and treat that model as part of the room's specification.
+
 ### Supported backend types
 
 | `type` value | Class | Notes |
