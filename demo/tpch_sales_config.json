@@ -1,0 +1,253 @@
+{
+  "_comment": "Tiri demo room — TPC-H Sales Analysis. Load with: python -m tiri.cli load-room demo/tpch_sales_config.json",
+
+  "room_id": "tpch-sales",
+  "title": "TPC-H Sales Analysis",
+  "warehouse_id": "${DB_WAREHOUSE_ID}",
+  "tables": [
+    "tpch.sf1.customer",
+    "tpch.sf1.orders",
+    "tpch.sf1.lineitem",
+    "tpch.sf1.nation",
+    "tpch.sf1.region"
+  ],
+
+  "text_instruction": "## About this room\nThis room answers business questions about sales performance, customer behavior, revenue trends, and geographic breakdowns using the TPC-H wholesale supplier dataset.\n\n## Vocabulary\n- 'Revenue' or 'sales' = SUM(l_extendedprice * (1 - l_discount)). Never use l_extendedprice alone as revenue — it does not account for discounts.\n- 'Charge' or 'billed amount' = SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)). Use this when the user asks what was actually charged or invoiced.\n- 'Discount amount' = SUM(l_extendedprice * l_discount). Use this when asked how much was discounted.\n- 'Order' = one row in the orders table. An order contains one or more line items.\n- 'Line item' = one row in lineitem. Each line item is a single part on a single order.\n- 'Customer' = one row in the customer table, identified by c_custkey.\n- 'Market segment' = c_mktsegment. Values include: AUTOMOBILE, BUILDING, FURNITURE, MACHINERY, HOUSEHOLD.\n- 'Order priority' = o_orderpriority. Values: 1-URGENT, 2-HIGH, 3-MEDIUM, 4-NOT SPECIFIED, 5-LOW.\n- 'Return flag' = l_returnflag. Values: R (returned), A (accepted), N (neither).\n- 'Line status' = l_linestatus. Values: O (open/unshipped), F (fulfilled/shipped).\n- 'Region' = one of five geographic regions: AFRICA, AMERICA, ASIA, EUROPE, MIDDLE EAST.\n- 'Nation' = one of 25 countries, each belonging to a region.\n\n## Date conventions\n- 'Ship date' = l_shipdate (when the item was shipped).\n- 'Order date' = o_orderdate (when the order was placed).\n- 'Commit date' = l_commitdate (promised delivery date).\n- 'Receipt date' = l_receiptdate (when the customer received it).\n- When the user says 'shipped', use l_shipdate. When they say 'ordered', use o_orderdate.\n- 'Late delivery' means l_receiptdate > l_commitdate.\n\n## Table naming\n- Always use fully-qualified table names: tpch.sf1.customer, tpch.sf1.orders, tpch.sf1.lineitem, tpch.sf1.nation, tpch.sf1.region.\n- Use short aliases: c for customer, o for orders, l for lineitem, n for nation, r for region.\n\n## Rules\n- When calculating revenue, ALWAYS use SUM(l_extendedprice * (1 - l_discount)). This is non-negotiable.\n- Round monetary values to 2 decimal places.\n- Round quantities to 2 decimal places.\n- Round fractions and averages to 4 decimal places.\n- Always include ORDER BY in result sets unless the user says otherwise.\n- Default sort for revenue queries: DESC. Default sort for date queries: ASC.\n- When the user asks for 'top N', use LIMIT N.\n- Never return more than 10,000 rows without the user explicitly asking.",
+
+  "examples": [
+    {
+      "question": "What is the total revenue by market segment?",
+      "sql": "SELECT\n  c.c_mktsegment                                        AS market_segment,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2) AS revenue\nFROM tpch.sf1.lineitem  l\nJOIN tpch.sf1.orders    o ON l.l_orderkey = o.o_orderkey\nJOIN tpch.sf1.customer  c ON o.o_custkey  = c.c_custkey\nGROUP BY c.c_mktsegment\nORDER BY revenue DESC"
+    },
+    {
+      "question": "What is the total revenue and discount amount by year?",
+      "sql": "SELECT\n  YEAR(l.l_shipdate)                                      AS ship_year,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2)   AS revenue,\n  ROUND(SUM(l.l_extendedprice * l.l_discount), 2)         AS total_discount\nFROM tpch.sf1.lineitem l\nGROUP BY YEAR(l.l_shipdate)\nORDER BY ship_year"
+    },
+    {
+      "question": "Who are the top 10 customers by revenue?",
+      "sql": "SELECT\n  c.c_custkey,\n  c.c_name,\n  c.c_acctbal,\n  c.c_mktsegment                                          AS market_segment,\n  n.n_name                                                AS nation,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2)  AS revenue\nFROM tpch.sf1.customer  c\nJOIN tpch.sf1.orders    o ON c.c_custkey   = o.o_custkey\nJOIN tpch.sf1.lineitem  l ON o.o_orderkey  = l.l_orderkey\nJOIN tpch.sf1.nation    n ON c.c_nationkey = n.n_nationkey\nGROUP BY c.c_custkey, c.c_name, c.c_acctbal, c.c_mktsegment, n.n_name\nORDER BY revenue DESC\nLIMIT 10"
+    },
+    {
+      "question": "What is the revenue by region?",
+      "sql": "SELECT\n  r.r_name                                                AS region,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2)  AS revenue\nFROM tpch.sf1.lineitem  l\nJOIN tpch.sf1.orders    o ON l.l_orderkey  = o.o_orderkey\nJOIN tpch.sf1.customer  c ON o.o_custkey   = c.c_custkey\nJOIN tpch.sf1.nation    n ON c.c_nationkey = n.n_nationkey\nJOIN tpch.sf1.region    r ON n.n_regionkey = r.r_regionkey\nGROUP BY r.r_name\nORDER BY revenue DESC"
+    },
+    {
+      "question": "What is the order volume and revenue by order priority?",
+      "sql": "SELECT\n  o.o_orderpriority                                       AS order_priority,\n  COUNT(DISTINCT o.o_orderkey)                            AS order_count,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2)  AS revenue\nFROM tpch.sf1.orders   o\nJOIN tpch.sf1.lineitem l ON o.o_orderkey = l.l_orderkey\nGROUP BY o.o_orderpriority\nORDER BY order_priority"
+    },
+    {
+      "question": "How much revenue came from returned items versus accepted items?",
+      "sql": "SELECT\n  l.l_returnflag,\n  l.l_linestatus,\n  SUM(l.l_quantity)                                       AS total_quantity,\n  ROUND(SUM(l.l_extendedprice), 2)                        AS gross_revenue,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2)  AS net_revenue,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)\n            * (1 + l.l_tax)), 2)                          AS billed_amount,\n  ROUND(AVG(l.l_quantity), 4)                             AS avg_quantity,\n  ROUND(AVG(l.l_extendedprice), 4)                        AS avg_price,\n  ROUND(AVG(l.l_discount), 4)                             AS avg_discount,\n  COUNT(*)                                                AS line_item_count\nFROM tpch.sf1.lineitem l\nGROUP BY l.l_returnflag, l.l_linestatus\nORDER BY l.l_returnflag, l.l_linestatus"
+    },
+    {
+      "question": "Which nations have the highest revenue and how do they rank within their region?",
+      "sql": "SELECT\n  r.r_name                                                AS region,\n  n.n_name                                                AS nation,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2)  AS revenue,\n  RANK() OVER (\n    PARTITION BY r.r_name\n    ORDER BY SUM(l.l_extendedprice * (1 - l.l_discount)) DESC\n  )                                                       AS rank_in_region\nFROM tpch.sf1.lineitem  l\nJOIN tpch.sf1.orders    o ON l.l_orderkey  = o.o_orderkey\nJOIN tpch.sf1.customer  c ON o.o_custkey   = c.c_custkey\nJOIN tpch.sf1.nation    n ON c.c_nationkey = n.n_nationkey\nJOIN tpch.sf1.region    r ON n.n_regionkey = r.r_regionkey\nGROUP BY r.r_name, n.n_name\nORDER BY r.r_name, rank_in_region"
+    },
+    {
+      "question": "What is the month-over-month revenue trend?",
+      "sql": "WITH monthly AS (\n  SELECT\n    DATE_TRUNC('month', l.l_shipdate)                      AS ship_month,\n    ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2) AS revenue\n  FROM tpch.sf1.lineitem l\n  GROUP BY DATE_TRUNC('month', l.l_shipdate)\n)\nSELECT\n  ship_month,\n  revenue,\n  ROUND(LAG(revenue) OVER (ORDER BY ship_month), 2)       AS prev_month_revenue,\n  ROUND(\n    (revenue - LAG(revenue) OVER (ORDER BY ship_month))\n    / LAG(revenue) OVER (ORDER BY ship_month) * 100\n  , 2)                                                    AS mom_growth_pct\nFROM monthly\nORDER BY ship_month"
+    },
+    {
+      "question": "How many orders were placed but not yet shipped?",
+      "sql": "SELECT\n  COUNT(DISTINCT o.o_orderkey)                            AS unshipped_orders,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2)  AS unshipped_value\nFROM tpch.sf1.orders   o\nJOIN tpch.sf1.lineitem l ON o.o_orderkey = l.l_orderkey\nWHERE l.l_linestatus = 'O'"
+    },
+    {
+      "question": "What percentage of line items were delivered late?",
+      "sql": "SELECT\n  COUNT(*)                                                AS total_line_items,\n  SUM(CASE WHEN l_receiptdate > l_commitdate THEN 1 ELSE 0 END)\n                                                          AS late_deliveries,\n  ROUND(\n    SUM(CASE WHEN l_receiptdate > l_commitdate THEN 1 ELSE 0 END)\n    / COUNT(*) * 100\n  , 2)                                                    AS late_pct\nFROM tpch.sf1.lineitem"
+    }
+  ],
+
+  "joins": [
+    {
+      "left_table": "tpch.sf1.orders",
+      "left_alias": "o",
+      "right_table": "tpch.sf1.lineitem",
+      "right_alias": "l",
+      "join_on": "o.o_orderkey = l.l_orderkey",
+      "relationship_type": "ONE_TO_MANY",
+      "instruction": "Every order has one or more line items. Join here when you need both order-level fields (order date, priority, status) and line item fields (price, discount, quantity, ship date)."
+    },
+    {
+      "left_table": "tpch.sf1.customer",
+      "left_alias": "c",
+      "right_table": "tpch.sf1.orders",
+      "right_alias": "o",
+      "join_on": "c.c_custkey = o.o_custkey",
+      "relationship_type": "ONE_TO_MANY",
+      "instruction": "Each customer places many orders. Join here when you need customer attributes (name, segment, nation, account balance) alongside order or line item data."
+    },
+    {
+      "left_table": "tpch.sf1.customer",
+      "left_alias": "c",
+      "right_table": "tpch.sf1.nation",
+      "right_alias": "n",
+      "join_on": "c.c_nationkey = n.n_nationkey",
+      "relationship_type": "MANY_TO_ONE",
+      "instruction": "Each customer belongs to one nation. Join here to get the customer's country name or to further join to region."
+    },
+    {
+      "left_table": "tpch.sf1.nation",
+      "left_alias": "n",
+      "right_table": "tpch.sf1.region",
+      "right_alias": "r",
+      "join_on": "n.n_regionkey = r.r_regionkey",
+      "relationship_type": "MANY_TO_ONE",
+      "instruction": "Each nation belongs to one region (AFRICA, AMERICA, ASIA, EUROPE, MIDDLE EAST). Join here for geographic rollups above the nation level."
+    }
+  ],
+
+  "sql_filters": [
+    {
+      "display_name": "Shipped items only",
+      "sql": "l.l_linestatus = 'F'",
+      "instruction": "Use when the user asks about fulfilled, shipped, or completed line items only.",
+      "synonyms": ["shipped", "fulfilled", "completed", "delivered"]
+    },
+    {
+      "display_name": "Open (unshipped) items",
+      "sql": "l.l_linestatus = 'O'",
+      "instruction": "Use when the user asks about open, pending, or unshipped orders.",
+      "synonyms": ["open", "unshipped", "pending", "in progress"]
+    },
+    {
+      "display_name": "Returned items",
+      "sql": "l.l_returnflag = 'R'",
+      "instruction": "Use when the user asks specifically about returned line items.",
+      "synonyms": ["returned", "returns", "refunded"]
+    },
+    {
+      "display_name": "Urgent orders",
+      "sql": "o.o_orderpriority = '1-URGENT'",
+      "instruction": "Use when the user asks about urgent or highest-priority orders.",
+      "synonyms": ["urgent", "high priority", "critical"]
+    },
+    {
+      "display_name": "Late deliveries",
+      "sql": "l.l_receiptdate > l.l_commitdate",
+      "instruction": "Use when the user asks about late, overdue, or delayed deliveries.",
+      "synonyms": ["late", "delayed", "overdue", "past commit date"]
+    },
+    {
+      "display_name": "Discounted items",
+      "sql": "l.l_discount > 0",
+      "instruction": "Use when the user asks about items that had any discount applied.",
+      "synonyms": ["discounted", "discount applied", "reduced price"]
+    }
+  ],
+
+  "sql_expressions": [
+    {
+      "display_name": "Revenue",
+      "sql": "l.l_extendedprice * (1 - l.l_discount)",
+      "instruction": "Net revenue per line item after discount. Always use this — never l_extendedprice alone.",
+      "synonyms": ["revenue", "net revenue", "sales", "net sales"]
+    },
+    {
+      "display_name": "Billed amount",
+      "sql": "l.l_extendedprice * (1 - l.l_discount) * (1 + l.l_tax)",
+      "instruction": "Total amount charged including tax. Use when the user asks what was invoiced or billed.",
+      "synonyms": ["billed", "charged", "invoiced", "total with tax"]
+    },
+    {
+      "display_name": "Discount amount",
+      "sql": "l.l_extendedprice * l.l_discount",
+      "instruction": "The absolute discount amount. Use when the user asks how much was discounted.",
+      "synonyms": ["discount", "savings", "amount discounted", "price reduction"]
+    },
+    {
+      "display_name": "Ship year",
+      "sql": "YEAR(l.l_shipdate)",
+      "instruction": "Extracts the year from the ship date. Use for annual trend analysis.",
+      "synonyms": ["year", "ship year", "annual"]
+    },
+    {
+      "display_name": "Ship month",
+      "sql": "DATE_TRUNC('month', l.l_shipdate)",
+      "instruction": "Truncates ship date to month. Use for monthly trend analysis.",
+      "synonyms": ["month", "monthly", "ship month"]
+    }
+  ],
+
+  "sample_questions": [
+    "What is our total revenue by region this year?",
+    "Who are our top 10 customers by revenue?",
+    "How has monthly revenue trended over the past year?",
+    "What percentage of our orders were delivered late?",
+    "Which market segment generates the most revenue?"
+  ],
+
+  "metrics": [
+    {
+      "name": "revenue",
+      "display_name": "Net Revenue",
+      "sql": "SUM(l.l_extendedprice * (1 - l.l_discount))",
+      "grain": "line item",
+      "description": "Total revenue after discounts. Never use l_extendedprice alone — it does not account for discounts.",
+      "synonyms": ["revenue", "net revenue", "sales", "net sales", "total revenue"],
+      "dimensions": ["r_name", "n_name", "c_mktsegment", "o_orderpriority", "l_returnflag", "YEAR(l_shipdate)", "DATE_TRUNC('month', l_shipdate)"],
+      "filters": [],
+      "unit": "USD"
+    },
+    {
+      "name": "billed_amount",
+      "display_name": "Billed Amount",
+      "sql": "SUM(l.l_extendedprice * (1 - l.l_discount) * (1 + l.l_tax))",
+      "grain": "line item",
+      "description": "Total amount charged to the customer including tax. Use when the user asks what was invoiced or actually charged.",
+      "synonyms": ["billed", "charged", "invoiced", "total with tax", "billed amount"],
+      "dimensions": ["r_name", "n_name", "c_mktsegment", "YEAR(l_shipdate)"],
+      "filters": [],
+      "unit": "USD"
+    },
+    {
+      "name": "discount_amount",
+      "display_name": "Discount Amount",
+      "sql": "SUM(l.l_extendedprice * l.l_discount)",
+      "grain": "line item",
+      "description": "The absolute value of discounts given. Use when the user asks how much was discounted or saved.",
+      "synonyms": ["discount", "savings", "amount discounted", "price reduction", "discount amount"],
+      "dimensions": ["r_name", "n_name", "c_mktsegment", "YEAR(l_shipdate)"],
+      "filters": [],
+      "unit": "USD"
+    },
+    {
+      "name": "late_delivery_rate",
+      "display_name": "Late Delivery Rate",
+      "sql": "ROUND(SUM(CASE WHEN l.l_receiptdate > l.l_commitdate THEN 1 ELSE 0 END) / COUNT(*) * 100, 2)",
+      "grain": "line item",
+      "description": "Percentage of line items delivered after the committed delivery date.",
+      "synonyms": ["late delivery rate", "late delivery pct", "late pct", "on-time rate"],
+      "dimensions": ["r_name", "n_name", "YEAR(l_shipdate)"],
+      "filters": [],
+      "unit": "%"
+    }
+  ],
+
+  "benchmarks": [
+    {
+      "question": "What are the total quantity, gross revenue, net revenue, and billed amount grouped by return flag and line status?",
+      "expected_sql": "SELECT l_returnflag, l_linestatus, SUM(l_quantity) AS sum_qty, ROUND(SUM(l_extendedprice), 2) AS sum_base_price, ROUND(SUM(l_extendedprice * (1 - l_discount)), 2) AS sum_disc_price, ROUND(SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)), 2) AS sum_charge, ROUND(AVG(l_quantity), 4) AS avg_qty, ROUND(AVG(l_extendedprice), 4) AS avg_price, ROUND(AVG(l_discount), 4) AS avg_disc, COUNT(*) AS count_order FROM tpch.sf1.lineitem GROUP BY l_returnflag, l_linestatus ORDER BY l_returnflag, l_linestatus",
+      "notes": "TPC-H Q1 — pricing summary report. Tests revenue formula and multi-aggregate grouping."
+    },
+    {
+      "question": "What is the revenue by customer, showing the top 10 customers with their nation and account balance?",
+      "expected_sql": "SELECT c.c_custkey, c.c_name, ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2) AS revenue, c.c_acctbal, n.n_name, c.c_address, c.c_comment FROM tpch.sf1.customer c JOIN tpch.sf1.orders o ON c.c_custkey = o.o_custkey JOIN tpch.sf1.lineitem l ON l.l_orderkey = o.o_orderkey JOIN tpch.sf1.nation n ON c.c_nationkey = n.n_nationkey GROUP BY c.c_custkey, c.c_name, c.c_acctbal, c.c_phone, n.n_name, c.c_address, c.c_comment ORDER BY revenue DESC LIMIT 10",
+      "notes": "TPC-H Q10 variant — top customers by revenue. Tests 4-table join and revenue formula."
+    },
+    {
+      "question": "How many orders were placed in each year, grouped by order priority?",
+      "expected_sql": "SELECT YEAR(o_orderdate) AS order_year, o_orderpriority, COUNT(*) AS order_count FROM tpch.sf1.orders GROUP BY YEAR(o_orderdate), o_orderpriority ORDER BY order_year, o_orderpriority",
+      "notes": "Tests date extraction and multi-dimension grouping."
+    },
+    {
+      "question": "What is the total revenue per nation, ranked within each region?",
+      "expected_sql": "SELECT r.r_name AS region, n.n_name AS nation, ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2) AS revenue, RANK() OVER (PARTITION BY r.r_name ORDER BY SUM(l.l_extendedprice * (1 - l.l_discount)) DESC) AS rank_in_region FROM tpch.sf1.lineitem l JOIN tpch.sf1.orders o ON l.l_orderkey = o.o_orderkey JOIN tpch.sf1.customer c ON o.o_custkey = c.c_custkey JOIN tpch.sf1.nation n ON c.c_nationkey = n.n_nationkey JOIN tpch.sf1.region r ON n.n_regionkey = r.r_regionkey GROUP BY r.r_name, n.n_name ORDER BY r.r_name, rank_in_region",
+      "notes": "Tests 5-table join and RANK() OVER PARTITION window function."
+    },
+    {
+      "question": "What percentage of line items were delivered late?",
+      "expected_sql": "SELECT COUNT(*) AS total_line_items, SUM(CASE WHEN l_receiptdate > l_commitdate THEN 1 ELSE 0 END) AS late_deliveries, ROUND(SUM(CASE WHEN l_receiptdate > l_commitdate THEN 1 ELSE 0 END) / COUNT(*) * 100, 2) AS late_pct FROM tpch.sf1.lineitem",
+      "notes": "Tests conditional aggregation and percentage calculation."
+    }
+  ]
+}

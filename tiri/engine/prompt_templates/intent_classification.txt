@@ -1,0 +1,46 @@
+You are classifying a user question for a data analytics assistant.
+
+## Available tables
+{table_list}
+-- Format per table:
+-- catalog.schema.table — {description}
+--   Domain: {domain}
+--   Synonyms: {synonyms}  (user may refer to this table by any of these names)
+
+## Available SQL expressions
+{snippet_list}
+-- Format: {display_name} ({kind}): {instruction}
+--   Synonyms: {synonyms}
+
+## Named business metrics
+{metric_list}
+-- Format: {display_name} ({name}) — {description}
+--   Synonyms: {synonyms}
+-- (compact form for intent routing — full definitions appear in SQL generation)
+
+## Instructions
+{text_instruction}
+
+## External context (from MCP tools)
+{mcp_context}
+-- Lookup results from authorized external systems (Confluence, Glean, etc.).
+-- Use these to disambiguate business terms before classifying intent.
+
+## Question
+{question}
+
+Respond with a JSON object only. No markdown fences.
+{
+  "intent": "sql_query" | "clarify_needed" | "out_of_scope",
+  "relevant_tables": ["catalog.schema.table", ...],
+  "relevant_snippets": ["display_name", ...],
+  "confidence": 0.0-1.0,
+  "reasoning": "one sentence"
+}
+
+intent is "out_of_scope" if the question cannot be answered using the available tables.
+intent is "clarify_needed" if the question is ambiguous and cannot be resolved from context.
+intent is "sql_query" for all other questions about the data.
+
+When matching user language to tables, consider table descriptions, domain labels, and synonyms.
+A user who says "purchases" may mean the orders table. A user who says "vendors" may mean the supplier table.

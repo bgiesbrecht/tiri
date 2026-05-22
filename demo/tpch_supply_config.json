@@ -1,0 +1,257 @@
+{
+  "_comment": "Tiri demo room — TPC-H Supply Chain. Load with: python -m tiri.cli load-room demo/tpch_supply_config.json",
+
+  "room_id": "tpch-supply",
+  "title": "TPC-H Supply Chain",
+  "warehouse_id": "${DB_WAREHOUSE_ID}",
+  "tables": [
+    "tpch.sf1.supplier",
+    "tpch.sf1.partsupp",
+    "tpch.sf1.part",
+    "tpch.sf1.lineitem",
+    "tpch.sf1.nation",
+    "tpch.sf1.region"
+  ],
+
+  "text_instruction": "## About this room\nThis room answers operational questions about supply chain performance, supplier relationships, part costs, availability, and fulfillment using the TPC-H wholesale supplier dataset.\n\n## Vocabulary\n- 'Supplier' = one row in the supplier table, identified by s_suppkey.\n- 'Part' = one row in the part table, identified by p_partkey. A part is a product component.\n- 'Supply relationship' = one row in partsupp. Each row means: this supplier can provide this part at this cost with this available quantity.\n- 'Available quantity' = ps_availqty. How many units the supplier currently has in stock.\n- 'Supply cost' = ps_supplycost. The cost per unit to procure this part from this supplier.\n- 'Retail price' = p_retailprice. The price at which the part is sold.\n- 'Margin' = p_retailprice - ps_supplycost. The gross margin per unit.\n- 'Part type' = p_type. A string describing the part category, e.g. 'ECONOMY ANODIZED STEEL'.\n- 'Part size' = p_size. An integer (1-50).\n- 'Container' = p_container. The packaging type, e.g. 'SM BOX', 'LG DRUM'.\n- 'Brand' = p_brand. Values like 'Brand#13', 'Brand#52'.\n- 'Account balance' = s_acctbal. The supplier's current account balance. Negative values may indicate outstanding issues.\n- 'Shipped quantity' = the quantity on line items (l_quantity) — what was actually ordered, distinct from ps_availqty (what is in stock).\n\n## Table naming\n- Always use fully-qualified table names: tpch.sf1.supplier, tpch.sf1.partsupp, tpch.sf1.part, tpch.sf1.lineitem, tpch.sf1.nation, tpch.sf1.region.\n- Use short aliases: s for supplier, ps for partsupp, p for part, l for lineitem, n for nation, r for region.\n\n## Critical join rule\n- ALWAYS join partsupp to lineitem on BOTH keys: l.l_partkey = ps.ps_partkey AND l.l_suppkey = ps.ps_suppkey.\n- Joining on partkey alone produces a cartesian explosion. This is the most common error in supply chain queries.\n\n## Rules\n- Round monetary values to 2 decimal places.\n- Round fractions and averages to 4 decimal places.\n- When the user asks about 'cost', use ps_supplycost unless context clearly indicates retail price.\n- When the user asks about 'revenue from shipments', use SUM(l_extendedprice * (1 - l_discount)) on lineitem.\n- Always ORDER BY unless the user says otherwise. Default: relevant metric DESC.",
+
+  "examples": [
+    {
+      "question": "Who are the top 10 suppliers by total value of parts supplied?",
+      "sql": "SELECT\n  s.s_suppkey,\n  s.s_name,\n  n.n_name                                              AS nation,\n  ROUND(SUM(ps.ps_supplycost * ps.ps_availqty), 2)      AS total_inventory_value\nFROM tpch.sf1.supplier  s\nJOIN tpch.sf1.partsupp  ps ON s.s_suppkey   = ps.ps_suppkey\nJOIN tpch.sf1.nation    n  ON s.s_nationkey = n.n_nationkey\nGROUP BY s.s_suppkey, s.s_name, n.n_name\nORDER BY total_inventory_value DESC\nLIMIT 10"
+    },
+    {
+      "question": "What is the average supply cost per part type?",
+      "sql": "SELECT\n  p.p_type,\n  COUNT(DISTINCT p.p_partkey)                           AS part_count,\n  ROUND(AVG(ps.ps_supplycost), 2)                       AS avg_supply_cost,\n  ROUND(MIN(ps.ps_supplycost), 2)                       AS min_supply_cost,\n  ROUND(MAX(ps.ps_supplycost), 2)                       AS max_supply_cost\nFROM tpch.sf1.part     p\nJOIN tpch.sf1.partsupp ps ON p.p_partkey = ps.ps_partkey\nGROUP BY p.p_type\nORDER BY avg_supply_cost DESC"
+    },
+    {
+      "question": "Which parts have the highest gross margin?",
+      "sql": "SELECT\n  p.p_partkey,\n  p.p_name,\n  p.p_type,\n  p.p_brand,\n  ROUND(p.p_retailprice, 2)                             AS retail_price,\n  ROUND(MIN(ps.ps_supplycost), 2)                       AS lowest_supply_cost,\n  ROUND(p.p_retailprice - MIN(ps.ps_supplycost), 2)     AS gross_margin\nFROM tpch.sf1.part     p\nJOIN tpch.sf1.partsupp ps ON p.p_partkey = ps.ps_partkey\nGROUP BY p.p_partkey, p.p_name, p.p_type, p.p_brand, p.p_retailprice\nORDER BY gross_margin DESC\nLIMIT 20"
+    },
+    {
+      "question": "How many parts does each supplier provide and what is their average supply cost?",
+      "sql": "SELECT\n  s.s_suppkey,\n  s.s_name,\n  n.n_name                                              AS nation,\n  COUNT(ps.ps_partkey)                                  AS parts_supplied,\n  ROUND(AVG(ps.ps_supplycost), 2)                       AS avg_supply_cost,\n  SUM(ps.ps_availqty)                                   AS total_available_qty\nFROM tpch.sf1.supplier  s\nJOIN tpch.sf1.partsupp  ps ON s.s_suppkey   = ps.ps_suppkey\nJOIN tpch.sf1.nation    n  ON s.s_nationkey = n.n_nationkey\nGROUP BY s.s_suppkey, s.s_name, n.n_name\nORDER BY parts_supplied DESC"
+    },
+    {
+      "question": "What is the shipped quantity versus available quantity per part?",
+      "sql": "SELECT\n  p.p_partkey,\n  p.p_name,\n  p.p_type,\n  SUM(ps.ps_availqty)                                   AS total_available,\n  COALESCE(SUM(l.l_quantity), 0)                        AS total_shipped,\n  ROUND(\n    COALESCE(SUM(l.l_quantity), 0)\n    / NULLIF(SUM(ps.ps_availqty), 0) * 100\n  , 2)                                                  AS utilization_pct\nFROM tpch.sf1.part     p\nJOIN tpch.sf1.partsupp ps ON p.p_partkey  = ps.ps_partkey\nLEFT JOIN tpch.sf1.lineitem l\n  ON l.l_partkey = ps.ps_partkey\n AND l.l_suppkey = ps.ps_suppkey\nGROUP BY p.p_partkey, p.p_name, p.p_type\nORDER BY utilization_pct DESC\nLIMIT 50"
+    },
+    {
+      "question": "Which suppliers have negative account balances?",
+      "sql": "SELECT\n  s.s_suppkey,\n  s.s_name,\n  s.s_phone,\n  n.n_name                                              AS nation,\n  ROUND(s.s_acctbal, 2)                                 AS account_balance\nFROM tpch.sf1.supplier s\nJOIN tpch.sf1.nation   n ON s.s_nationkey = n.n_nationkey\nWHERE s.s_acctbal < 0\nORDER BY s.s_acctbal ASC"
+    },
+    {
+      "question": "What is the total supply cost by nation?",
+      "sql": "SELECT\n  n.n_name                                              AS nation,\n  COUNT(DISTINCT s.s_suppkey)                           AS supplier_count,\n  COUNT(DISTINCT ps.ps_partkey)                         AS parts_supplied,\n  ROUND(SUM(ps.ps_supplycost * ps.ps_availqty), 2)      AS total_inventory_value\nFROM tpch.sf1.supplier  s\nJOIN tpch.sf1.partsupp  ps ON s.s_suppkey   = ps.ps_suppkey\nJOIN tpch.sf1.nation    n  ON s.s_nationkey = n.n_nationkey\nGROUP BY n.n_name\nORDER BY total_inventory_value DESC"
+    },
+    {
+      "question": "For each part, which supplier offers the lowest supply cost?",
+      "sql": "WITH ranked AS (\n  SELECT\n    ps.ps_partkey,\n    p.p_name,\n    p.p_type,\n    s.s_name                                            AS supplier_name,\n    n.n_name                                            AS supplier_nation,\n    ROUND(ps.ps_supplycost, 2)                          AS supply_cost,\n    ps.ps_availqty,\n    RANK() OVER (\n      PARTITION BY ps.ps_partkey\n      ORDER BY ps.ps_supplycost ASC\n    )                                                   AS cost_rank\n  FROM tpch.sf1.partsupp  ps\n  JOIN tpch.sf1.part      p  ON ps.ps_partkey  = p.p_partkey\n  JOIN tpch.sf1.supplier  s  ON ps.ps_suppkey  = s.s_suppkey\n  JOIN tpch.sf1.nation    n  ON s.s_nationkey  = n.n_nationkey\n)\nSELECT * FROM ranked\nWHERE cost_rank = 1\nORDER BY supply_cost DESC\nLIMIT 50"
+    },
+    {
+      "question": "How many parts are available in each size and container type combination?",
+      "sql": "SELECT\n  p.p_size,\n  p.p_container,\n  COUNT(DISTINCT p.p_partkey)                           AS part_count,\n  ROUND(AVG(p.p_retailprice), 2)                        AS avg_retail_price,\n  ROUND(AVG(ps.ps_supplycost), 2)                       AS avg_supply_cost\nFROM tpch.sf1.part     p\nJOIN tpch.sf1.partsupp ps ON p.p_partkey = ps.ps_partkey\nGROUP BY p.p_size, p.p_container\nORDER BY p.p_size, p.p_container"
+    },
+    {
+      "question": "Which parts were ordered the most by shipped quantity?",
+      "sql": "SELECT\n  p.p_partkey,\n  p.p_name,\n  p.p_brand,\n  p.p_type,\n  SUM(l.l_quantity)                                     AS total_shipped_qty,\n  COUNT(DISTINCT l.l_orderkey)                          AS order_count,\n  ROUND(SUM(l.l_extendedprice * (1 - l.l_discount)), 2) AS revenue\nFROM tpch.sf1.lineitem l\nJOIN tpch.sf1.part     p ON l.l_partkey = p.p_partkey\nGROUP BY p.p_partkey, p.p_name, p.p_brand, p.p_type\nORDER BY total_shipped_qty DESC\nLIMIT 20"
+    }
+  ],
+
+  "joins": [
+    {
+      "left_table": "tpch.sf1.supplier",
+      "left_alias": "s",
+      "right_table": "tpch.sf1.partsupp",
+      "right_alias": "ps",
+      "join_on": "s.s_suppkey = ps.ps_suppkey",
+      "relationship_type": "ONE_TO_MANY",
+      "instruction": "Each supplier has many part-supply relationships. Join here to see what parts a supplier provides and at what cost."
+    },
+    {
+      "left_table": "tpch.sf1.part",
+      "left_alias": "p",
+      "right_table": "tpch.sf1.partsupp",
+      "right_alias": "ps",
+      "join_on": "p.p_partkey = ps.ps_partkey",
+      "relationship_type": "ONE_TO_MANY",
+      "instruction": "Each part can be supplied by multiple suppliers. Join here to get supply cost and availability for a part."
+    },
+    {
+      "left_table": "tpch.sf1.partsupp",
+      "left_alias": "ps",
+      "right_table": "tpch.sf1.lineitem",
+      "right_alias": "l",
+      "join_on": "ps.ps_partkey = l.l_partkey AND ps.ps_suppkey = l.l_suppkey",
+      "relationship_type": "ONE_TO_MANY",
+      "instruction": "CRITICAL: This join requires BOTH keys — partkey AND suppkey. Never join partsupp to lineitem on partkey alone. Use this to compare what was ordered (lineitem) against what was available (partsupp)."
+    },
+    {
+      "left_table": "tpch.sf1.supplier",
+      "left_alias": "s",
+      "right_table": "tpch.sf1.nation",
+      "right_alias": "n",
+      "join_on": "s.s_nationkey = n.n_nationkey",
+      "relationship_type": "MANY_TO_ONE",
+      "instruction": "Each supplier is located in one nation. Join here for geographic supplier analysis."
+    },
+    {
+      "left_table": "tpch.sf1.lineitem",
+      "left_alias": "l",
+      "right_table": "tpch.sf1.part",
+      "right_alias": "p",
+      "join_on": "l.l_partkey = p.p_partkey",
+      "relationship_type": "MANY_TO_ONE",
+      "instruction": "Each line item references one part. Join here to get part name, type, brand, or retail price alongside shipment data."
+    },
+    {
+      "left_table": "tpch.sf1.lineitem",
+      "left_alias": "l",
+      "right_table": "tpch.sf1.supplier",
+      "right_alias": "s",
+      "join_on": "l.l_suppkey = s.s_suppkey",
+      "relationship_type": "MANY_TO_ONE",
+      "instruction": "Each line item was fulfilled by one supplier. Join here to get supplier name or nation alongside shipment data."
+    },
+    {
+      "left_table": "tpch.sf1.nation",
+      "left_alias": "n",
+      "right_table": "tpch.sf1.region",
+      "right_alias": "r",
+      "join_on": "n.n_regionkey = r.r_regionkey",
+      "relationship_type": "MANY_TO_ONE",
+      "instruction": "Each nation belongs to one region (AFRICA, AMERICA, ASIA, EUROPE, MIDDLE EAST). Join here for geographic rollups above nation level or to filter suppliers by region."
+    }
+  ],
+
+  "sql_filters": [
+    {
+      "display_name": "Low stock parts",
+      "sql": "ps.ps_availqty < 100",
+      "instruction": "Use when the user asks about low stock, nearly out of stock, or parts running low.",
+      "synonyms": ["low stock", "running low", "scarce", "low availability"]
+    },
+    {
+      "display_name": "Suppliers with negative balance",
+      "sql": "s.s_acctbal < 0",
+      "instruction": "Use when the user asks about suppliers with outstanding issues, debt, or negative accounts.",
+      "synonyms": ["negative balance", "overdue", "in debt", "at-risk suppliers"]
+    },
+    {
+      "display_name": "High-cost supply relationships",
+      "sql": "ps.ps_supplycost > 500",
+      "instruction": "Use when the user asks about expensive parts or high-cost procurement.",
+      "synonyms": ["expensive", "high cost", "costly", "premium parts"]
+    },
+    {
+      "display_name": "Large container parts",
+      "sql": "p.p_container LIKE 'LG%'",
+      "instruction": "Use when the user asks about large format or bulk packaged parts.",
+      "synonyms": ["large", "bulk", "large container", "LG"]
+    }
+  ],
+
+  "sql_expressions": [
+    {
+      "display_name": "Inventory value",
+      "sql": "ps.ps_supplycost * ps.ps_availqty",
+      "instruction": "The total value of a supplier's available stock for one part.",
+      "synonyms": ["inventory value", "stock value", "available inventory worth"]
+    },
+    {
+      "display_name": "Gross margin per unit",
+      "sql": "p.p_retailprice - ps.ps_supplycost",
+      "instruction": "The gross margin per unit for a given part-supplier combination.",
+      "synonyms": ["margin", "gross margin", "profit per unit", "markup"]
+    },
+    {
+      "display_name": "Shipped revenue",
+      "sql": "l.l_extendedprice * (1 - l.l_discount)",
+      "instruction": "Revenue from a shipped line item. Use when the user asks about revenue from actual shipments.",
+      "synonyms": ["shipment revenue", "shipped value", "revenue from shipments"]
+    }
+  ],
+
+  "sample_questions": [
+    "Who are our top 10 suppliers by total inventory value?",
+    "Which parts have the highest gross margin?",
+    "Which suppliers have negative account balances?",
+    "What is the average supply cost by part type?",
+    "Which parts are at risk of running low on stock?"
+  ],
+
+  "metrics": [
+    {
+      "name": "inventory_value",
+      "display_name": "Inventory Value",
+      "sql": "SUM(ps.ps_supplycost * ps.ps_availqty)",
+      "grain": "supplier-part combination",
+      "description": "Total value of available stock across all supplier-part relationships. Supply cost times available quantity.",
+      "synonyms": ["inventory value", "stock value", "inventory worth", "available inventory"],
+      "dimensions": ["n_name", "p_type", "p_brand", "s_name"],
+      "filters": [],
+      "unit": "USD"
+    },
+    {
+      "name": "gross_margin",
+      "display_name": "Gross Margin",
+      "sql": "SUM(p.p_retailprice - ps.ps_supplycost)",
+      "grain": "supplier-part combination",
+      "description": "Total gross margin across parts — retail price minus supply cost per unit.",
+      "synonyms": ["gross margin", "margin", "profit", "markup", "profit margin"],
+      "dimensions": ["p_type", "p_brand", "n_name"],
+      "filters": [],
+      "unit": "USD"
+    },
+    {
+      "name": "avg_supply_cost",
+      "display_name": "Average Supply Cost",
+      "sql": "ROUND(AVG(ps.ps_supplycost), 2)",
+      "grain": "supplier-part combination",
+      "description": "Average cost per unit to procure a part across all suppliers.",
+      "synonyms": ["average supply cost", "avg cost", "mean cost", "average procurement cost"],
+      "dimensions": ["p_type", "p_brand", "n_name", "s_name"],
+      "filters": [],
+      "unit": "USD"
+    },
+    {
+      "name": "shipped_revenue",
+      "display_name": "Shipped Revenue",
+      "sql": "SUM(l.l_extendedprice * (1 - l.l_discount))",
+      "grain": "line item",
+      "description": "Revenue from actual shipments — extended price after discount. Use when the user asks about revenue from fulfillment.",
+      "synonyms": ["shipped revenue", "shipment revenue", "fulfillment revenue", "revenue from shipments"],
+      "dimensions": ["n_name", "p_type", "p_brand"],
+      "filters": [],
+      "unit": "USD"
+    }
+  ],
+
+  "benchmarks": [
+    {
+      "question": "Which suppliers in Europe have the highest account balance and supply the most parts?",
+      "expected_sql": "SELECT s.s_suppkey, s.s_name, s.s_acctbal, n.n_name AS nation, COUNT(ps.ps_partkey) AS parts_supplied FROM tpch.sf1.supplier s JOIN tpch.sf1.partsupp ps ON s.s_suppkey = ps.ps_suppkey JOIN tpch.sf1.nation n ON s.s_nationkey = n.n_nationkey JOIN tpch.sf1.region r ON n.n_regionkey = r.r_regionkey WHERE r.r_name = 'EUROPE' GROUP BY s.s_suppkey, s.s_name, s.s_acctbal, n.n_name ORDER BY s.s_acctbal DESC, parts_supplied DESC LIMIT 20",
+      "notes": "TPC-H Q2 variant. Tests 4-table join with region filter and multi-column sort."
+    },
+    {
+      "question": "For each part, what is the minimum supply cost across all suppliers?",
+      "expected_sql": "SELECT ps.ps_partkey, p.p_name, ROUND(MIN(ps.ps_supplycost), 2) AS min_supply_cost, COUNT(DISTINCT ps.ps_suppkey) AS supplier_count FROM tpch.sf1.partsupp ps JOIN tpch.sf1.part p ON ps.ps_partkey = p.p_partkey GROUP BY ps.ps_partkey, p.p_name ORDER BY min_supply_cost DESC LIMIT 20",
+      "notes": "Tests aggregation across partsupp and join to part."
+    },
+    {
+      "question": "How many distinct parts does each supplier provide, ordered by part count?",
+      "expected_sql": "SELECT s.s_suppkey, s.s_name, n.n_name AS nation, COUNT(DISTINCT ps.ps_partkey) AS distinct_parts FROM tpch.sf1.supplier s JOIN tpch.sf1.partsupp ps ON s.s_suppkey = ps.ps_suppkey JOIN tpch.sf1.nation n ON s.s_nationkey = n.n_nationkey GROUP BY s.s_suppkey, s.s_name, n.n_name ORDER BY distinct_parts DESC",
+      "notes": "Tests COUNT DISTINCT and 3-table join."
+    },
+    {
+      "question": "What is the total available quantity and average supply cost per nation?",
+      "expected_sql": "SELECT n.n_name AS nation, SUM(ps.ps_availqty) AS total_available_qty, ROUND(AVG(ps.ps_supplycost), 2) AS avg_supply_cost, COUNT(DISTINCT s.s_suppkey) AS supplier_count FROM tpch.sf1.supplier s JOIN tpch.sf1.partsupp ps ON s.s_suppkey = ps.ps_suppkey JOIN tpch.sf1.nation n ON s.s_nationkey = n.n_nationkey GROUP BY n.n_name ORDER BY total_available_qty DESC",
+      "notes": "Tests geographic aggregation across supplier-partsupp-nation."
+    },
+    {
+      "question": "Which parts have more than 5 suppliers?",
+      "expected_sql": "SELECT ps.ps_partkey, p.p_name, p.p_type, COUNT(DISTINCT ps.ps_suppkey) AS supplier_count, ROUND(MIN(ps.ps_supplycost), 2) AS min_cost, ROUND(MAX(ps.ps_supplycost), 2) AS max_cost FROM tpch.sf1.partsupp ps JOIN tpch.sf1.part p ON ps.ps_partkey = p.p_partkey GROUP BY ps.ps_partkey, p.p_name, p.p_type HAVING COUNT(DISTINCT ps.ps_suppkey) > 5 ORDER BY supplier_count DESC",
+      "notes": "Tests HAVING clause and multi-supplier parts."
+    }
+  ]
+}

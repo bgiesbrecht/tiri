@@ -1,0 +1,19 @@
+{
+  "tpch.sf1.lineitem": {
+    "row_count": 6,
+    "columns": [
+      {"name": "l_orderkey", "data_type": "BIGINT"},
+      {"name": "l_extendedprice", "data_type": "DECIMAL(15,2)"},
+      {"name": "l_discount", "data_type": "DECIMAL(15,2)"},
+      {"name": "l_returnflag", "data_type": "STRING"}
+    ]
+  },
+  "tpch.sf1.orders": {
+    "row_count": 3,
+    "columns": [
+      {"name": "o_orderkey", "data_type": "BIGINT"},
+      {"name": "o_custkey", "data_type": "BIGINT"},
+      {"name": "o_orderpriority", "data_type": "STRING"}
+    ]
+  }
+}

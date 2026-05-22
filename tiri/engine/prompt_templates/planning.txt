@@ -1,0 +1,61 @@
+You are analyzing a business question to determine how many SQL queries
+are needed to answer it completely.
+
+## Question
+{question}
+
+## Available tables
+{table_summary}
+
+## Instructions
+{text_instruction}
+
+## Reasoning rules
+
+Most questions need ONE query. Use one step when:
+- A direct aggregation answers the question (counts, sums, averages, lists)
+- The question asks for a single fact or table
+
+Use multiple steps ONLY when the question genuinely needs comparison,
+decomposition, or contextual grounding:
+- "Why did X change" — needs the trend, plus a breakdown by dimension, plus
+  possibly cohorts. The user is asking for evidence to inform their own
+  causal reasoning. Tiri does not assert causes, but provides the data
+  patterns that surround the change.
+- "How does X compare to Y" — at least one query per side, possibly a
+  combined view as a final step.
+- "Show me X broken down by Y and Z" — may need separate cuts when Y and
+  Z don't share a sensible join.
+
+Maximum 5 steps. If you would produce more than 5, prioritize the most
+informative cuts and drop the rest. Quality over breadth.
+
+For multi-step plans, each later step's `depends_on` lists the earlier
+step_ids whose results inform this step's interpretation. SQL generation
+does not consume prior results — `depends_on` is a synthesis ordering
+hint, not a data flow.
+
+## Output
+
+Respond with a JSON reasoning plan only. No markdown fences.
+
+{
+  "requires_multiple_queries": true | false,
+  "steps": [
+    {
+      "step_id": "step_1",
+      "description": "one sentence stating what THIS query computes",
+      "depends_on": []
+    }
+  ],
+  "synthesis_instruction": "how to combine the step results into a final answer — e.g. 'compare step_1 trend against the step_2 segment breakdown to show which segments drove the overall pattern'"
+}
+
+If `requires_multiple_queries` is false, return exactly one step. The
+single step's `description` SHOULD be a faithful restatement of the user
+question — do NOT decompose, re-interpret, or add scope. The
+`synthesis_instruction` for single-step plans is "Report the single
+result directly."
+
+Each step_id MUST be unique. The first step_id MUST be "step_1".
+`depends_on` MUST only reference earlier step_ids in the same plan.

@@ -1,0 +1,14 @@
+A user asked a question that needs clarification before you can write SQL.
+
+## Available tables
+{table_list}
+
+## Original question
+{question}
+
+## Why it needs clarification
+{reasoning}
+
+Generate a single, focused follow-up question to resolve the ambiguity.
+Prefer yes/no or multiple-choice questions. Be brief.
+Respond with the question text only. No preamble.

@@ -1,0 +1,19 @@
+tables:
+  tpch.sf1.lineitem:
+    description: "Line items on customer orders"
+    grain: "one row per line item"
+    domain: sales
+    synonyms:
+      - line items
+      - order lines
+    columns:
+      l_returnflag:
+        description: "Return status"
+        value_description: "R=returned, A=accepted, N=neither"
+        semantic_type: category
+        synonyms: [return, return flag]
+      l_extendedprice:
+        description: "Gross price before discounts"
+        semantic_type: currency
+        currency_code: USD
+        is_high_cardinality: true

@@ -1,0 +1,477 @@
+# tpch_metadata.yaml
+# Metadata for the TPC-H demo rooms (Sales Analysis and Supply Chain).
+# Load this file as a YAMLMetadataProvider in tiri.toml:
+#
+#   [[metadata.providers.stack]]
+#   name = "tpch_domain"
+#   type = "yaml"
+#   path = "./demo/tpch_metadata.yaml"
+#
+# This file is room-independent — it describes the tables themselves.
+# Room-specific overrides belong in column_overrides in the room config.
+
+tables:
+
+  tpch.sf1.lineitem:
+    description: "Individual line items on customer orders. Each row is one product
+      on one order, fulfilled by one supplier."
+    grain: "one row per line item — a unique combination of order, part, and supplier"
+    domain: sales
+    freshness: daily
+    default_date_column: l_shipdate
+    synonyms:
+      - line items
+      - order lines
+      - order details
+    recommended_joins:
+      - tpch.sf1.orders
+      - tpch.sf1.part
+      - tpch.sf1.supplier
+      - tpch.sf1.partsupp
+    columns:
+      l_orderkey:
+        description: "Foreign key to the orders table"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.orders
+        foreign_key_column: o_orderkey
+        is_high_cardinality: true
+      l_partkey:
+        description: "Foreign key to the part table — which part was ordered"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.part
+        foreign_key_column: p_partkey
+        is_high_cardinality: true
+      l_suppkey:
+        description: "Foreign key to the supplier table — which supplier fulfilled this line item"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.supplier
+        foreign_key_column: s_suppkey
+        is_high_cardinality: true
+      l_linenumber:
+        description: "Position of this line item within its order (1-indexed)"
+      l_quantity:
+        description: "Quantity ordered for this line item"
+        semantic_type: measure
+      l_extendedprice:
+        description: "Gross price for this line item — quantity times part price, before discounts"
+        semantic_type: currency
+        currency_code: USD
+        is_high_cardinality: true
+        synonyms:
+          - gross price
+          - list price
+          - price before discount
+      l_discount:
+        description: "Fractional discount applied to this line item"
+        value_description: "Decimal 0.00 to 0.10 — multiply by 100 for percentage. Revenue = l_extendedprice * (1 - l_discount)"
+        synonyms:
+          - discount rate
+          - discount fraction
+      l_tax:
+        description: "Tax rate applied to this line item after discount"
+        value_description: "Decimal, typically 0.00 to 0.08"
+        synonyms:
+          - tax rate
+      l_returnflag:
+        description: "Whether this line item was returned, accepted, or is still open"
+        value_description: "R = returned by customer, A = accepted/delivered, N = not yet determined (still in transit)"
+        semantic_type: category
+        synonyms:
+          - return status
+          - return flag
+          - return
+        sample_values:
+          - "R"
+          - "A"
+          - "N"
+      l_linestatus:
+        description: "Whether this line item has been shipped or is still open"
+        value_description: "F = fulfilled/shipped, O = open/not yet shipped"
+        semantic_type: category
+        synonyms:
+          - line status
+          - shipment status
+          - fulfillment status
+        sample_values:
+          - "F"
+          - "O"
+      l_shipdate:
+        description: "Date this line item was shipped to the customer"
+        semantic_type: date
+        synonyms:
+          - ship date
+          - shipping date
+          - shipped
+      l_commitdate:
+        description: "Promised delivery date for this line item"
+        semantic_type: date
+        synonyms:
+          - commit date
+          - promised date
+          - due date
+      l_receiptdate:
+        description: "Date the customer actually received this line item"
+        semantic_type: date
+        synonyms:
+          - receipt date
+          - delivery date
+          - received
+      l_shipinstruct:
+        description: "Special shipping instructions for this line item"
+        semantic_type: category
+      l_shipmode:
+        description: "Method of shipment"
+        value_description: "AIR, AIR REG, RAIL, TRUCK, MAIL, SHIP, FOB"
+        semantic_type: category
+        synonyms:
+          - ship mode
+          - shipping method
+          - transport mode
+
+  tpch.sf1.orders:
+    description: "Customer purchase orders. Each row is one order placed by one customer."
+    grain: "one row per order — identified by o_orderkey"
+    domain: sales
+    freshness: daily
+    default_date_column: o_orderdate
+    synonyms:
+      - orders
+      - purchases
+      - customer orders
+    recommended_joins:
+      - tpch.sf1.customer
+      - tpch.sf1.lineitem
+    columns:
+      o_orderkey:
+        description: "Primary key for the orders table"
+        is_primary_key: true
+        is_high_cardinality: true
+      o_custkey:
+        description: "Foreign key to the customer table"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.customer
+        foreign_key_column: c_custkey
+        is_high_cardinality: true
+      o_orderstatus:
+        description: "Current fulfillment status of the entire order"
+        value_description: "O = open (has unshipped items), F = fully fulfilled, P = partially fulfilled"
+        semantic_type: category
+        synonyms:
+          - order status
+          - status
+        sample_values:
+          - "O"
+          - "F"
+          - "P"
+      o_totalprice:
+        description: "Total price of the entire order — sum of all line item extended prices"
+        semantic_type: currency
+        currency_code: USD
+        is_high_cardinality: true
+        synonyms:
+          - order total
+          - total price
+      o_orderdate:
+        description: "Date this order was placed by the customer"
+        semantic_type: date
+        synonyms:
+          - order date
+          - purchase date
+          - placed date
+      o_orderpriority:
+        description: "Urgency level assigned to this order"
+        value_description: "1-URGENT, 2-HIGH, 3-MEDIUM, 4-NOT SPECIFIED, 5-LOW"
+        semantic_type: category
+        synonyms:
+          - order priority
+          - priority
+        sample_values:
+          - "1-URGENT"
+          - "2-HIGH"
+          - "3-MEDIUM"
+          - "4-NOT SPECIFIED"
+          - "5-LOW"
+      o_clerk:
+        description: "Identifier of the clerk who processed this order"
+        is_high_cardinality: true
+      o_shippriority:
+        description: "Shipping priority for this order (0 = normal)"
+
+  tpch.sf1.customer:
+    description: "Customers who place orders. Each row is one customer account."
+    grain: "one row per customer — identified by c_custkey"
+    domain: sales
+    synonyms:
+      - customers
+      - accounts
+      - buyers
+    recommended_joins:
+      - tpch.sf1.orders
+      - tpch.sf1.nation
+    columns:
+      c_custkey:
+        description: "Primary key for the customer table"
+        is_primary_key: true
+        is_high_cardinality: true
+      c_name:
+        description: "Customer name"
+        is_high_cardinality: true
+        synonyms:
+          - customer name
+          - name
+      c_address:
+        description: "Customer mailing address"
+        exclude_from_select_star: true
+        is_high_cardinality: true
+      c_nationkey:
+        description: "Foreign key to the nation table — which country this customer is in"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.nation
+        foreign_key_column: n_nationkey
+      c_phone:
+        description: "Customer phone number"
+        exclude_from_select_star: true
+      c_acctbal:
+        description: "Customer account balance — may be negative if customer owes money"
+        semantic_type: currency
+        currency_code: USD
+        synonyms:
+          - account balance
+          - balance
+      c_mktsegment:
+        description: "Market segment this customer belongs to"
+        value_description: "AUTOMOBILE, BUILDING, FURNITURE, MACHINERY, HOUSEHOLD"
+        semantic_type: category
+        synonyms:
+          - market segment
+          - segment
+          - industry
+        sample_values:
+          - "AUTOMOBILE"
+          - "BUILDING"
+          - "FURNITURE"
+          - "MACHINERY"
+          - "HOUSEHOLD"
+      c_comment:
+        description: "Free-text comment about this customer"
+        exclude_from_select_star: true
+        is_high_cardinality: true
+
+  tpch.sf1.nation:
+    description: "Reference table of 25 nations, each belonging to one region."
+    grain: "one row per nation"
+    domain: geography
+    synonyms:
+      - nations
+      - countries
+    recommended_joins:
+      - tpch.sf1.region
+      - tpch.sf1.customer
+      - tpch.sf1.supplier
+    columns:
+      n_nationkey:
+        description: "Primary key for the nation table"
+        is_primary_key: true
+      n_name:
+        description: "Nation name"
+        semantic_type: category
+        synonyms:
+          - country
+          - nation
+          - country name
+      n_regionkey:
+        description: "Foreign key to the region table"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.region
+        foreign_key_column: r_regionkey
+
+  tpch.sf1.region:
+    description: "Reference table of 5 geographic regions grouping the 25 nations."
+    grain: "one row per region"
+    domain: geography
+    synonyms:
+      - regions
+      - geographic regions
+    columns:
+      r_regionkey:
+        description: "Primary key for the region table"
+        is_primary_key: true
+      r_name:
+        description: "Region name"
+        value_description: "AFRICA, AMERICA, ASIA, EUROPE, MIDDLE EAST"
+        semantic_type: category
+        synonyms:
+          - region
+          - geography
+          - area
+        sample_values:
+          - "AFRICA"
+          - "AMERICA"
+          - "ASIA"
+          - "EUROPE"
+          - "MIDDLE EAST"
+
+  tpch.sf1.supplier:
+    description: "Suppliers who provide parts. Each row is one supplier."
+    grain: "one row per supplier — identified by s_suppkey"
+    domain: supply_chain
+    synonyms:
+      - suppliers
+      - vendors
+      - manufacturers
+    recommended_joins:
+      - tpch.sf1.partsupp
+      - tpch.sf1.nation
+      - tpch.sf1.lineitem
+    columns:
+      s_suppkey:
+        description: "Primary key for the supplier table"
+        is_primary_key: true
+        is_high_cardinality: true
+      s_name:
+        description: "Supplier name"
+        is_high_cardinality: true
+        synonyms:
+          - supplier name
+          - vendor name
+          - name
+      s_address:
+        description: "Supplier mailing address"
+        exclude_from_select_star: true
+        is_high_cardinality: true
+      s_nationkey:
+        description: "Foreign key to the nation table — which country this supplier is in"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.nation
+        foreign_key_column: n_nationkey
+      s_phone:
+        description: "Supplier phone number"
+        exclude_from_select_star: true
+      s_acctbal:
+        description: "Supplier account balance. Negative values indicate the supplier owes money."
+        semantic_type: currency
+        currency_code: USD
+        synonyms:
+          - account balance
+          - balance
+          - supplier balance
+      s_comment:
+        description: "Free-text comment about this supplier"
+        exclude_from_select_star: true
+        is_high_cardinality: true
+
+  tpch.sf1.part:
+    description: "Parts (products) available in the catalog. Each row is one distinct part."
+    grain: "one row per part — identified by p_partkey"
+    domain: supply_chain
+    synonyms:
+      - parts
+      - products
+      - items
+      - components
+    recommended_joins:
+      - tpch.sf1.partsupp
+      - tpch.sf1.lineitem
+    columns:
+      p_partkey:
+        description: "Primary key for the part table"
+        is_primary_key: true
+        is_high_cardinality: true
+      p_name:
+        description: "Part name — a concatenation of color and material descriptors"
+        is_high_cardinality: true
+        synonyms:
+          - part name
+          - product name
+          - name
+      p_mfgr:
+        description: "Manufacturer of this part"
+        semantic_type: category
+        synonyms:
+          - manufacturer
+          - maker
+      p_brand:
+        description: "Brand identifier for this part"
+        value_description: "String like 'Brand#13' or 'Brand#52'"
+        semantic_type: category
+        synonyms:
+          - brand
+          - brand name
+      p_type:
+        description: "Category description of this part — material and finish"
+        value_description: "String like 'ECONOMY ANODIZED STEEL' or 'PROMO BRUSHED COPPER'"
+        semantic_type: category
+        synonyms:
+          - part type
+          - type
+          - category
+          - material
+      p_size:
+        description: "Size of the part on an integer scale from 1 to 50"
+        value_description: "Integer 1 to 50 — higher values indicate larger parts"
+        synonyms:
+          - size
+          - part size
+      p_container:
+        description: "Standard packaging container type for this part"
+        value_description: "SM BOX, SM CASE, SM PACK, SM PKG, MED BAG, MED BOX, MED PACK, MED PKG, LG BOX, LG CASE, LG PACK, LG PKG, JUMBO BAG, JUMBO BOX, JUMBO CASE, JUMBO PACK"
+        semantic_type: category
+        synonyms:
+          - container
+          - packaging
+          - package type
+      p_retailprice:
+        description: "Retail price at which this part is sold to customers"
+        semantic_type: currency
+        currency_code: USD
+        synonyms:
+          - retail price
+          - price
+          - selling price
+
+  tpch.sf1.partsupp:
+    description: "Supply relationships — which suppliers can provide which parts, at what
+      cost and with what available quantity. Each row is one supplier-part combination."
+    grain: "one row per supplier-part combination — identified by (ps_partkey, ps_suppkey)"
+    domain: supply_chain
+    synonyms:
+      - part suppliers
+      - supply relationships
+      - supplier-part catalog
+    recommended_joins:
+      - tpch.sf1.part
+      - tpch.sf1.supplier
+    columns:
+      ps_partkey:
+        description: "Foreign key to the part table — which part this supply relationship covers"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.part
+        foreign_key_column: p_partkey
+        is_high_cardinality: true
+      ps_suppkey:
+        description: "Foreign key to the supplier table — which supplier this row represents"
+        is_foreign_key: true
+        foreign_key_table: tpch.sf1.supplier
+        foreign_key_column: s_suppkey
+        is_high_cardinality: true
+      ps_availqty:
+        description: "Quantity of this part currently available from this supplier"
+        semantic_type: measure
+        synonyms:
+          - available quantity
+          - stock
+          - inventory
+          - availability
+      ps_supplycost:
+        description: "Cost per unit to procure this part from this supplier"
+        semantic_type: currency
+        currency_code: USD
+        synonyms:
+          - supply cost
+          - cost
+          - procurement cost
+          - unit cost
+      ps_comment:
+        description: "Free-text comment about this supply relationship"
+        exclude_from_select_star: true
+        is_high_cardinality: true

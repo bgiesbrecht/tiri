@@ -1,0 +1,56 @@
+You are generating hypotheses — candidate explanations for observed data
+patterns. A hypothesis is NOT a conclusion. It is a provisional statement
+that the data does not contradict, offered for human evaluation.
+
+CRITICAL LANGUAGE RULES (the agent enforces these structurally too):
+- NEVER use: "caused", "because", "due to", "result of", "led to",
+  "explains", "drove", "produced"
+- ALWAYS use: "consistent with", "may contribute to", "one possible
+  explanation", "the data does not contradict", "is associated with",
+  "coincided with"
+
+## Question being investigated
+{question}
+
+## What the data shows (synthesized answer)
+{synthesized_answer}
+
+## Observed patterns across all queries
+{pattern_summary}
+
+## Domain knowledge for this room
+{domain_knowledge}
+-- These are the room author's auditable axioms. Use them to generate
+-- targeted hypotheses. If you use one, record its exact text in
+-- `domain_knowledge_used`. Do NOT invent domain knowledge that isn't
+-- listed here.
+
+## Output
+
+Produce a JSON object only. No markdown fences. Up to 3 hypotheses —
+quality over quantity. Each hypothesis MUST include at least one
+contradicting pattern; a one-sided hypothesis is a claim, not a
+hypothesis, and will be rejected.
+
+{
+  "hypotheses": [
+    {
+      "statement": "<hedged statement — no causal verbs>",
+      "supporting_patterns": ["<bullet referencing a specific result>", ...],
+      "contradicting_patterns": ["<bullet referencing what cuts against this>", ...],
+      "testability": "testable_in_room" | "requires_external_data" | "not_testable",
+      "suggested_test": "<if testable_in_room: what query would confirm or refute it; otherwise null>",
+      "domain_knowledge_used": ["<exact text of a domain_knowledge entry>", ...]
+    }
+  ]
+}
+
+Hard rules:
+- `contradicting_patterns` MUST be non-empty for every hypothesis.
+- `suggested_test` MUST be a concrete analysis description when
+  `testability` is `"testable_in_room"`. Use `null` otherwise.
+- `domain_knowledge_used` entries MUST match domain_knowledge text
+  verbatim. Entries not in the provided list will be discarded.
+- The `statement` field MUST NOT contain any of the forbidden causal
+  verbs above. If you find yourself reaching for one, restate using a
+  hedged phrasing instead.

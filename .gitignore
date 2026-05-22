@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Test / IDE
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+# Obsidian uses docs/ as its vault — personal workspace state shouldn't ship.
+docs/.obsidian/
+
+# Local environment + credentials — NEVER commit
+.env
+.env.local
+.env.*.local
+tiri.toml
+token
+token.txt
+*.pem
+*.key
+# docs/temp_instructions contains a historical workspace token + ad-hoc
+# session notes — never appropriate for the public repo.
+docs/temp_instructions
+docs/temp_instructions.*
+
+# Local benchmark validation artifacts (workspace-specific)
+demo/*.local.json
+data/
+
+# OS junk
+.DS_Store
