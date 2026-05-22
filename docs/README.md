@@ -67,6 +67,9 @@ README  (you are here)
 [[roadmap]]                    ← Customer-validated capabilities tabled for future design
       uses → extensions, vision, data_models, metadata, providers
 
+[[tuning]]                     ← Room tuning guide — diagnose and fix benchmark failures
+      uses → agents, data_models, configuration, feedback, extensions
+
 [[demo]]                       ← TPC-H demo rooms, benchmarks, first-run guide
       uses → room_engine, knowledge_store, agents, feedback
 ```
@@ -84,7 +87,7 @@ README  (you are here)
 | Orchestration | [[room_engine]] | Wires agents into a coherent pipeline |
 | Surface | [[api]], [[feedback]] | External interface and improvement loop |
 | Extensions | [[extensions]] | Additional capabilities for specific integration requirements |
-| Reference | [[concept_map]], [[roadmap]] | Genie-to-Tiri mapping and customer-validated future capabilities |
+| Reference | [[concept_map]], [[roadmap]], [[tuning]] | Genie-to-Tiri mapping, customer-validated future capabilities, room tuning guide |
 | Demo | [[demo]] | TPC-H rooms, benchmarks, first-run guide |
 
 ---
