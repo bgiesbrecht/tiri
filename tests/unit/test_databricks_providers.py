@@ -105,6 +105,108 @@ async def test_llm_complete_returns_content() -> None:
     assert captured["body"]["messages"] == [{"role": "user", "content": "hi"}]
 
 
+# ── System-only message normalization (proxied upstream APIs) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_llm_complete_injects_user_placeholder_for_system_only_prompt() -> None:
+    """Caught during frontier-model benchmark validation against Databricks-
+    hosted Anthropic Claude (Opus 4.7) and Vertex Gemini (2.5 Pro). The
+    Databricks proxy passes the request through to the upstream API, which
+    rejects empty `messages` arrays:
+        - Anthropic: 'messages: at least one message is required'
+        - Gemini:    'at least one contents field is required'
+    Tiri's agents pass a single system message containing the full prompt
+    (system role only). The provider now injects a directive user
+    placeholder so upstream-proxied models receive a valid request shape.
+    Native Llama endpoints accept the placeholder transparently."""
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}], "usage": {}},
+        )
+
+    provider = DatabricksLLMProvider(
+        host=HOST, token=TOKEN, client=_make_client(handler)
+    )
+    await provider.complete(
+        [LLMMessage(role="system", content="follow instructions")]
+    )
+    msgs = captured["body"]["messages"]
+    # System message preserved as-is.
+    assert msgs[0] == {"role": "system", "content": "follow instructions"}
+    # User placeholder injected.
+    assert len(msgs) == 2
+    assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"]  # non-empty directive content
+
+
+# ── Temperature-retry for reasoning models (claude-opus-4-x) ──────────────
+
+
+@pytest.mark.asyncio
+async def test_llm_complete_retries_without_temperature_on_unsupported() -> None:
+    """Databricks-hosted reasoning models (claude-opus-4-x) reject the
+    `temperature` parameter at the proxy layer with HTTP 400
+    'Model ... does not support the temperature parameter.' The provider
+    retries once with `temperature` stripped — preserves determinism on
+    every other endpoint that accepts it."""
+    call_count = {"n": 0}
+    captured_bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        body = json.loads(request.content)
+        captured_bodies.append(body)
+        if call_count["n"] == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error_code": "BAD_REQUEST",
+                    "message": (
+                        "BAD_REQUEST: Model us.anthropic.claude-opus-4-7 "
+                        "does not support the temperature parameter."
+                    ),
+                },
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}], "usage": {}},
+        )
+
+    provider = DatabricksLLMProvider(
+        host=HOST, token=TOKEN, client=_make_client(handler)
+    )
+    response = await provider.complete(
+        [LLMMessage(role="user", content="hi")], temperature=0.0
+    )
+    assert response.content == "ok"
+    assert call_count["n"] == 2
+    # First request carried temperature; retry omitted it.
+    assert "temperature" in captured_bodies[0]
+    assert "temperature" not in captured_bodies[1]
+
+
+@pytest.mark.asyncio
+async def test_llm_complete_other_400_errors_still_raise() -> None:
+    """The temperature-retry path MUST NOT swallow other 400 errors."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error_code": "BAD_REQUEST", "message": "some other 400"},
+        )
+
+    provider = DatabricksLLMProvider(
+        host=HOST, token=TOKEN, client=_make_client(handler)
+    )
+    with pytest.raises(LLMProviderError, match="some other 400"):
+        await provider.complete([LLMMessage(role="user", content="hi")])
+
+
 # ── Case 2: HTTP 429 MUST retry up to 3 times ──────────────────────────────
 
 

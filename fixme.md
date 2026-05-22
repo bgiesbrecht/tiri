@@ -11,6 +11,52 @@ Severity legend:
 
 ## Open
 
+### L4 — Gemini 2.5 Pro benchmark crash [Spec]
+
+Smoke ping against `databricks-gemini-2-5-pro` succeeded (returned
+`PONG` + 177 reasoning tokens) after the system-only message
+normalization + larger `max_tokens` fix. Full benchmark crashed in
+`DatabricksCatalogProvider.get` (Unity Catalog API call) — likely
+token expiry mid-run or a transient workspace issue, NOT a Tiri code
+bug. The catalog call worked moments earlier in the Opus 4.7 run.
+
+**Fix in place:** system-only message normalization (`_normalize_messages`
+injects a directive user placeholder) and the `"Please respond to the
+instructions above"` text are correct for Gemini. The crash is
+infrastructure-side.
+
+**Retry plan:** refresh the Databricks PAT and re-run with full debug
+output before concluding Gemini is unsupported. If the catalog call
+still fails after a fresh token, file as a workspace-side issue.
+
+---
+
+### L3 — GPT-5.5 Pro / Responses API not supported [Spec]
+
+`DatabricksLLMProvider` speaks the Chat Completions API
+(`/serving-endpoints/{endpoint}/invocations`) only. GPT-5 family models
+on Databricks (`databricks-gpt-5-5-pro`, `databricks-gpt-5-4`,
+`databricks-gpt-5-mini`, etc.) require the **Responses API**:
+
+```
+Model databricks-gpt-5-5-pro only supports the Responses API.
+Please use /serving-endpoints/responses or /serving-endpoints/open-responses instead.
+```
+
+**Fix.** Add a code path for the Responses API. Options:
+- New `DatabricksResponsesLLMProvider` subclass — clear separation, but
+  duplicates auth/retry logic.
+- Extend `DatabricksLLMProvider` to detect GPT-5-family endpoints and
+  route to `/responses` — less duplication, more conditional logic.
+- Catch the specific "only supports the Responses API" 400 and retry
+  through the new endpoint — same pattern as the
+  temperature-retry from this session.
+
+No other model currently requires this, so non-urgent. Tracked here so
+a future GPT-5 deployment doesn't blindside the next session.
+
+---
+
 ### M2 — LLM output guardrail false-positives on benign row data [Real-world observation]
 
 The llama-3-1-8b output guardrail fires `indiscriminate-weapons:true`

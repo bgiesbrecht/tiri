@@ -58,13 +58,27 @@ class DatabricksLLMProvider(LLMProvider):
     ) -> LLMResponse:
         endpoint = model or self._completion_endpoint
         body = {
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": _normalize_messages(messages),
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        data = await self._post_json(
-            f"/serving-endpoints/{endpoint}/invocations", body
-        )
+        try:
+            data = await self._post_json(
+                f"/serving-endpoints/{endpoint}/invocations", body
+            )
+        except LLMProviderError as exc:
+            # Some Databricks-hosted reasoning endpoints (claude-opus-4-x)
+            # reject the `temperature` parameter at the proxy layer:
+            # `Model ... does not support the temperature parameter.`
+            # Retry once with temperature stripped — preserves determinism
+            # on every other endpoint that accepts it.
+            if "does not support the temperature parameter" in str(exc):
+                body.pop("temperature", None)
+                data = await self._post_json(
+                    f"/serving-endpoints/{endpoint}/invocations", body
+                )
+            else:
+                raise
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as e:
@@ -83,7 +97,7 @@ class DatabricksLLMProvider(LLMProvider):
     ) -> AsyncIterator[str]:
         endpoint = model or self._completion_endpoint
         body = {
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": _normalize_messages(messages),
             "temperature": temperature,
             "stream": True,
         }
@@ -187,3 +201,33 @@ def _parse_sse_chunk(line: str) -> str:
         return data["choices"][0]["delta"].get("content", "") or ""
     except (KeyError, IndexError, TypeError):
         return ""
+
+
+def _normalize_messages(messages: list[LLMMessage]) -> list[dict]:
+    """Databricks Model Serving proxies upstream LLM APIs (Anthropic Claude,
+    Vertex Gemini, OpenAI). Upstream APIs reject requests that contain only
+    system messages — Anthropic with "messages: at least one message is
+    required", Gemini with "at least one contents field is required". The
+    native Llama endpoints accept system-only, but the proxy doesn't
+    rewrite the request to fit the upstream contract.
+
+    Caught during frontier-model benchmark validation (Opus 4.7 + Gemini
+    2.5 Pro both returned 0/5). Fix: same pattern as AnthropicLLMProvider's
+    `_split_messages` — inject a "Proceed." user turn when no user or
+    assistant messages are present. Llama accepts the placeholder fine;
+    Opus / Gemini now have at least one user message and pass through.
+    """
+    out = [{"role": m.role, "content": m.content} for m in messages]
+    if not any(m["role"] in ("user", "assistant") for m in out):
+        # The placeholder needs to be directive enough that models which
+        # generate against the user message (Gemini in particular) actually
+        # produce output. "Proceed." alone returns empty content on
+        # databricks-gemini-2-5-pro; explicitly pointing back at the system
+        # instructions works across Claude / Gemini / GPT proxies.
+        out.append(
+            {
+                "role": "user",
+                "content": "Please respond to the instructions above.",
+            }
+        )
+    return out
