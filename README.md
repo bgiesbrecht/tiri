@@ -4,7 +4,7 @@ A data reasoning system — a natural-language interface to structured data that
 
 Named after **Tiresias**, the Greek prophet who revealed what was already true rather than predicting the future. Tiri does the same: it surfaces what the data actually says, with evidence, without bluffing.
 
-Tiri extends and replaces Databricks Genie Spaces — no table limits, any LLM, MCP integration, multi-query reasoning, and a hard architectural ban on causal claims from observational data.
+Tiri is built on the Databricks platform alongside Genie — using the same foundation of Unity Catalog, Model Serving, and SQL Warehouses — and extends into reasoning questions that require multi-query planning, synthesis, explicit uncertainty, and a hard architectural ban on causal claims from observational data.
 
 ---
 

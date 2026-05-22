@@ -6,7 +6,7 @@ This file is your starting point. Read it before reading anything else.
 
 ## What you are building
 
-**Tiri** is a data reasoning system — a natural-language interface to structured data that reasons across multiple queries, shows its work, and tells users what it cannot determine. It extends and replaces Databricks Genie Spaces.
+**Tiri** is a data reasoning system — a natural-language interface to structured data that reasons across multiple queries, shows its work, and tells users what it cannot determine. It is built on the Databricks platform alongside Genie, extending into reasoning questions that require multi-query planning, synthesis, and explicit uncertainty.
 
 Named after Tiresias, the Greek prophet who revealed what was already true rather than predicting the future. Tiri does the same: it surfaces what the data actually says, with evidence, without bluffing.
 

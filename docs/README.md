@@ -7,7 +7,7 @@ status: stable
 
 This is the entry point for the Tiri architecture. Every component in the system is reachable from here. **Any document not linked from this map, or not linked from a document reachable from this map, is suspect.**
 
-Tiri is a data reasoning system — a natural-language interface to structured data that reasons across multiple queries, shows its work, and tells you what it cannot determine. It extends and replaces Databricks Genie Spaces with no table limits, any LLM, MCP integration, and a reasoning layer above SQL.
+Tiri is a data reasoning system — a natural-language interface to structured data that reasons across multiple queries, shows its work, and tells you what it cannot determine. It is built on the Databricks platform — using the same foundation of Unity Catalog, Model Serving, and SQL Warehouses that Genie uses — and extends into reasoning questions that require planning, multi-query synthesis, and explicit uncertainty.
 
 ---
 
