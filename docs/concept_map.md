@@ -16,10 +16,10 @@ depends_on: []
 
 ## What this is
 
-A precise mapping of every Genie concept to its Tiri equivalent, the underlying Databricks component it uses, and — where Tiri differs — why. Use this document to:
+A precise mapping of Genie concepts to their Tiri equivalents, the underlying Databricks services each uses, and — where Tiri differs — the scenario that motivates the difference. Use this document to:
 
-- Understand how Genie works by analogy to concepts you already know from this project
-- Understand exactly how Tiri extends, replaces, or reimagines each Genie concept
+- Understand how Genie and Tiri relate to each other and to the Databricks platform
+- Understand which scenarios call for Tiri's additional capabilities vs. Genie's built-in behavior
 - Know which Databricks service each piece of the system actually calls at runtime
 
 Read the column headers carefully. There are five:
@@ -30,58 +30,58 @@ Read the column headers carefully. There are five:
 | **Databricks service** | The concrete AWS/Azure/GCP service or API Genie uses underneath |
 | **Tiri equivalent** | The corresponding Tiri component or design |
 | **Tiri service** | The concrete service Tiri uses by default (may differ from Genie) |
-| **Tiri status** | `parity` = same capability · `extension` = meaningfully beyond Genie · `replaced` = different approach entirely |
+| **Tiri status** | `parity` = same capability · `extension` = additional capability for specific scenarios · `different` = different approach to the same problem |
 
 ---
 
 ## Layer 1 — The model (LLM)
 
-### What Genie does
-Genie uses a single Databricks-hosted LLM, selected and managed by Databricks. You cannot change it, configure it, or route different tasks to different models. It is not exposed as a settable parameter anywhere in the API.
+### Standard Genie behavior
+Genie uses a single Databricks-hosted LLM, selected and managed by Databricks. It is not configurable or exposed as a settable parameter.
 
 ### The mapping
 
 | Genie concept | Databricks service | Tiri equivalent | Tiri service | Tiri status |
 |---|---|---|---|---|
-| Single locked LLM | Databricks Model Serving (internal, not user-facing) | `LLMProvider` ABC + `RouterLLMProvider` | Any Model Serving endpoint, OpenAI, Anthropic, or Ollama | **extension** |
+| Single Databricks-hosted LLM | Databricks Model Serving (internal, not user-facing) | `LLMProvider` ABC + `RouterLLMProvider` | Any Model Serving endpoint, OpenAI, Anthropic, or Ollama | **extension** |
 | No model choice | — | `tiri.toml` `[llm.providers]` registry | User-configured per backend | **extension** |
 | No per-task routing | — | `[llm.routing]` in `tiri.toml` | Per-task model assignment (intent / sql / synthesis / embed) | **extension** |
 | No embedding configuration | Databricks-internal embedding | `embed` route in `RouterLLMProvider` | Separate, configurable embedding endpoint | **extension** |
 
-### What this means in practice
-When Genie classifies your intent and generates SQL, it uses the same model for both. Tiri can use a fast 8B model for classification (cheap, low latency) and a 70B reasoning model for SQL generation (expensive, high quality) — or route SQL to OpenAI and synthesis to Anthropic, all from the same room. The `RouterLLMProvider` is the implementation. See [[extensions]] EXT-3 and [[configuration]].
+### When this matters
+For most deployments Genie's hosted LLM is sufficient. This extension is relevant when integration requirements call for a specific vendor, BYO model, or per-task cost optimization. See [[extensions]] EXT-3 and [[configuration]].
 
 ---
 
 ## Layer 2 — The data (tables and schema)
 
-### What Genie does
-Genie requires all tables to be registered in Unity Catalog. You select up to 30 tables when configuring a Space. All 30 schemas are loaded into every prompt for every question. The 30-table limit is hard — Databricks' own documentation recommends staying under 5 for best results.
+### Standard Genie behavior
+Genie requires all tables to be registered in Unity Catalog. You select up to 30 tables when configuring a Space.
 
 ### The mapping
 
 | Genie concept | Databricks service | Tiri equivalent | Tiri service | Tiri status |
 |---|---|---|---|---|
 | Table selection (up to 30) | Unity Catalog | `RoomConfig.tables` + `TableSelector` (EXT-2) | UC + `CatalogProvider` | **extension** |
-| Hard 30-table cap | UC API limit | No cap — dynamic selection per question (EXT-2) | `CatalogProvider.list_tables()` + vector similarity | **extension** |
-| UC-only data source | Unity Catalog exclusively | `CatalogProvider` ABC — any catalog | UC, Hive, static file, DuckDB | **extension** |
-| Schema loaded per-prompt | UC `TableInfo` API | `MetadataFetcher` + metadata stack | `CatalogProvider` + `MetadataProvider` stack | **replaced** |
+| Dynamic table selection per question | — | `TableSelector` (EXT-2) — semantic similarity per question | `CatalogProvider.list_tables()` + vector similarity | **extension** |
+| UC catalog | Unity Catalog | `CatalogProvider` ABC — any catalog | UC, Hive, static file, DuckDB | **extension** |
+| Schema loaded per-prompt | UC `TableInfo` API | `MetadataFetcher` + metadata stack | `CatalogProvider` + `MetadataProvider` stack | **different** |
 | Column comments from UC | UC column metadata | Layer 2 of metadata stack | `UCAnnotationsMetadataProvider` | **parity** |
-| No external metadata | — | `MetadataProvider` ABC + ordered stack | YAML, Delta table, dbt, OpenMetadata | **extension** |
-| No column synonyms | — | `ColumnMeta.synonyms` (accumulated across stack) | Any `MetadataProvider` | **extension** |
-| No semantic typing | — | `ColumnMeta.semantic_type` (date/currency/category/measure) | Any `MetadataProvider` | **extension** |
-| No grain description | — | `TableMeta.grain` ("one row per order") | Any `MetadataProvider` | **extension** |
-| No default filters | — | `TableMeta.default_filter` | `RoomConfig` or `MetadataProvider` | **extension** |
-| No conflict detection | — | `TableMeta.conflicts: list[MetadataConflict]` | `MetadataFetcher` merge pass | **extension** |
+| External metadata sources | — | `MetadataProvider` ABC + ordered stack | YAML, Delta table, dbt, OpenMetadata | **extension** |
+| Column synonyms | — | `ColumnMeta.synonyms` (accumulated across stack) | Any `MetadataProvider` | **extension** |
+| Semantic column typing | — | `ColumnMeta.semantic_type` (date/currency/category/measure) | Any `MetadataProvider` | **extension** |
+| Table grain description | — | `TableMeta.grain` ("one row per order") | Any `MetadataProvider` | **extension** |
+| Table-level default filters | — | `TableMeta.default_filter` | `RoomConfig` or `MetadataProvider` | **extension** |
+| Metadata conflict tracking | — | `TableMeta.conflicts: list[MetadataConflict]` | `MetadataFetcher` merge pass | **extension** |
 
-### What this means in practice
-Genie reads UC and that is the end of the story. Tiri treats schema retrieval and semantic enrichment as two separate concerns handled by two separate provider types. `CatalogProvider` knows what columns exist. `MetadataProvider` knows what they mean. You can stack as many metadata sources as you need — UC annotations → a domain YAML your team maintains → a Delta table your data governance tooling writes to → room-level overrides — and the merge rules (scalar: last-writer-wins; lists: accumulate) handle conflicts predictably. See [[metadata]] for the full stack design.
+### When this matters
+For most deployments UC annotations are sufficient. When integration requirements call for stacking additional metadata sources — domain YAML, Delta tables, dbt manifests — Tiri's layered `MetadataProvider` stack handles the merge predictably (scalar: last-writer-wins; lists: accumulate). See [[metadata]] for the full stack design.
 
 ---
 
 ## Layer 3 — The knowledge store
 
-### What Genie does
+### Standard Genie behavior
 The knowledge store is a structured JSON document embedded in the Space configuration. It contains: text instructions, example SQL queries, JOIN specifications, SQL filters, SQL expressions, SQL measures, and sample questions. It is edited via the UI or the Management API. It is the primary mechanism for teaching Genie about your business.
 
 ### The mapping
@@ -90,51 +90,51 @@ The knowledge store is a structured JSON document embedded in the Space configur
 |---|---|---|---|---|
 | Text instructions | `serialized_space.instructions.text_instructions` (max 1 item) | `RoomConfig.text_instruction` | `StoreProvider` (Delta table) | **parity** |
 | Example SQL queries | `example_question_sqls` list | `RoomConfig.examples: list[ExampleSQL]` | `StoreProvider` + vector-indexed via `VectorProvider` | **extension** |
-| Example retrieval | None — all examples injected into every prompt | `ExampleIndexer.retrieve()` — top-k by semantic similarity | Databricks Vector Search | **extension** |
-| JOIN specifications | `join_specs` with magic comment for relationship type | `RoomConfig.joins: list[JoinSpec]` with clean enum | `StoreProvider` | **parity** (cleaner schema) |
+| Example retrieval | All examples injected per prompt | `ExampleIndexer.retrieve()` — top-k by semantic similarity | Databricks Vector Search | **extension** |
+| JOIN specifications | `join_specs` with relationship type comment | `RoomConfig.joins: list[JoinSpec]` with typed enum | `StoreProvider` | **parity** |
 | SQL filters | `sql_snippets.filters` | `RoomConfig.sql_filters: list[SqlSnippet]` | `StoreProvider` | **parity** |
 | SQL expressions | `sql_snippets.expressions` | `RoomConfig.sql_expressions: list[SqlSnippet]` | `StoreProvider` | **parity** |
 | SQL measures | `sql_snippets.measures` (added 2025) | `RoomConfig.sql_measures: list[SqlSnippet]` | `StoreProvider` | **parity** |
 | Sample questions | `config.sample_questions` | `RoomConfig.sample_questions` | `StoreProvider` | **parity** |
-| 200 snippet limit | Hard cap in Genie | No limit | — | **extension** |
+| Snippet count | Up to 200 snippets | No limit | — | **extension** |
 | Column descriptions (local) | Space-local column overrides | `RoomConfig.column_overrides: list[ColumnOverride]` | `StoreProvider` (applied by `RoomConfigMetadataProvider`) | **extension** |
-| No synonyms on columns | — | `ColumnMeta.synonyms` in column overrides and metadata stack | `MetadataProvider` | **extension** |
-| Knowledge store as config file | `serialized_space` JSON string (escaped) | `RoomConfig` dataclass → JSON → `StoreProvider` | Delta KV table | **replaced** (cleaner) |
+| Column synonyms | — | `ColumnMeta.synonyms` in column overrides and metadata stack | `MetadataProvider` | **extension** |
+| Knowledge store as config file | `serialized_space` JSON string (escaped) | `RoomConfig` dataclass → JSON → `StoreProvider` | Delta KV table | **different** |
 | Programmatic update (PATCH + etag) | `PATCH /api/2.0/genie/spaces/{id}` | `PATCH /rooms/{id}` management API | Same pattern, cleaner schema | **parity** |
 
-### What this means in practice
-The Genie knowledge store and Tiri's `RoomConfig` are conceptually equivalent — both teach the system about your data and business terms. The key differences: Tiri vector-indexes examples so only the most relevant ones are injected per question (Genie injects all of them, which hurts quality at scale); Tiri has no 200-snippet cap; the schema is a proper Python dataclass rather than an escaped JSON string; and column-level metadata is a first-class concept that participates in the metadata stack rather than being a local override bolted on.
+### When this matters
+The Genie knowledge store and Tiri's `RoomConfig` are conceptually equivalent. Tiri adds vector-indexed example retrieval (top-k per question rather than all examples per prompt), no snippet count limit, and a typed dataclass schema for programmatic management.
 
 ---
 
 ## Layer 4 — The agents (compound AI)
 
-### What Genie does
+### Standard Genie behavior
 Genie uses what Databricks calls a "compound AI system" — multiple LLM calls in sequence, each with a focused prompt. The internal agent pipeline is not publicly documented, but from behavior and release notes it includes: intent detection, SQL generation, clarification generation, and visualization selection. The pipeline is managed by Databricks and runs as configured.
 
 ### The mapping
 
 | Genie concept | Databricks service | Tiri equivalent | Tiri service | Tiri status |
 |---|---|---|---|---|
-| Intent detection agent | Internal (undocumented) | `IntentAgent` | `LLMProvider` (intent route — fast model) | **parity** (inspectable) |
-| SQL generation agent | Internal | `SQLAgent` with self-correction loop | `LLMProvider` (sql route) | **extension** (self-corrects) |
-| Clarification agent | Internal | `ClarifyAgent` | `LLMProvider` (clarify route — fast model) | **parity** (inspectable) |
-| Visualization agent | Internal | `VizAgent` (rule-based + one LLM call for summary) | `LLMProvider` (viz_summary route) + Python Vega-Lite builder | **replaced** (more reliable) |
-| No planning agent | — | `PlanningAgent` (EXT-1) | `LLMProvider` (planning route — reasoning model) | **extension** |
-| No synthesis agent | — | `SynthesisAgent` (EXT-1) | `LLMProvider` (synthesis route) | **extension** |
-| Black-box pipeline | No visibility | `RoomEngine` — fully inspectable, every step logged | `StoreProvider` | **replaced** |
-| No streaming reasoning trace | Partial (thinking steps added 2025) | `stream_chat()` SSE events per pipeline stage | FastAPI SSE | **extension** |
-| `ContextPackage` | Not a public concept | `ContextPackage` dataclass — the assembled prompt context | Built by `ContextBuilder` | **extension** (explicit) |
+| Intent detection agent | Managed by platform | `IntentAgent` | `LLMProvider` (intent route — fast model) | **parity** |
+| SQL generation agent | Managed by platform | `SQLAgent` with self-correction loop | `LLMProvider` (sql route) | **extension** |
+| Clarification agent | Managed by platform | `ClarifyAgent` | `LLMProvider` (clarify route — fast model) | **parity** |
+| Visualization agent | Managed by platform | `VizAgent` (rule-based + one LLM call for summary) | `LLMProvider` (viz_summary route) + Python Vega-Lite builder | **different** |
+| Planning agent | — | `PlanningAgent` (EXT-1) | `LLMProvider` (planning route — reasoning model) | **extension** |
+| Synthesis agent | — | `SynthesisAgent` (EXT-1) | `LLMProvider` (synthesis route) | **extension** |
+| Pipeline visibility | Managed by platform | `RoomEngine` — fully inspectable, every step logged | `StoreProvider` | **different** |
+| Streaming reasoning trace | Thinking steps (added 2025) | `stream_chat()` SSE events per pipeline stage | FastAPI SSE | **extension** |
+| `ContextPackage` | Platform-internal concept | `ContextPackage` dataclass — the assembled prompt context | Built by `ContextBuilder` | **extension** |
 | SQL EXPLAIN validation | Internal | `QueryProvider.validate()` before every `execute()` | Databricks SQL Warehouse EXPLAIN | **parity** (enforced as invariant) |
 
-### What this means in practice
-Genie's compound AI pipeline runs as a managed service. Tiri's pipeline is a first-class inspectable system — every agent has a typed input, a typed output, a named prompt template file, and test cases. `PlanningAgent` and `SynthesisAgent` (EXT-1) are the biggest additions: they enable multi-step reasoning across several queries. The `VizAgent` approach also differs — Tiri builds Vega-Lite specs programmatically and only calls an LLM for the one-sentence summary, which produces more consistent output.
+### When this matters
+Genie's pipeline is a managed service — reliable and well-maintained. Tiri's pipeline is a self-deployed, fully inspectable system where every agent has a typed input, typed output, and named prompt template. `PlanningAgent` and `SynthesisAgent` (EXT-1) add multi-step reasoning for scenarios that require it.
 
 ---
 
 ## Layer 5 — SQL execution
 
-### What Genie does
+### Standard Genie behavior
 Genie executes SQL against a Databricks SQL Warehouse (Pro or Serverless required). The warehouse credentials are embedded in the Space configuration — all users execute as the room creator. This is the appropriate default for many deployments but does not apply per-user Unity Catalog row-level security.
 
 Genie has a limited OAuth passthrough capability on Serverless SQL Warehouses in certain workspace configurations (added 2025). When enabled, queries execute using the end user's OAuth token rather than the service principal. This is not the default, is restricted to Serverless warehouses, and the configuration surface is limited. It does not cover Pro warehouses.
@@ -144,43 +144,43 @@ Genie has a limited OAuth passthrough capability on Serverless SQL Warehouses in
 | Genie concept | Databricks service | Tiri equivalent | Tiri service | Tiri status |
 |---|---|---|---|---|
 | SQL Warehouse execution | Databricks SQL Statement Execution API | `QueryProvider` ABC → `DatabricksQueryProvider` | SQL Statement Execution API | **parity** |
-| Embedded credentials (room creator) | Hardcoded in Space config | `user_token` pass-through (EXT-6) | Per-request Bearer token → Statement Execution API | **extension** |
-| Limited OBO on Serverless only | OAuth passthrough — Serverless + specific workspace config | EXT-6 works on both Serverless and Pro warehouses | `DatabricksQueryProvider` header swap | **extension** |
-| UC row-level security bypassed | — | EXT-6 enforces per-user execution | UC column masking + row filters apply | **extension** |
+| Room creator credentials (default) | Space config credentials | `user_token` pass-through (EXT-6) | Per-request Bearer token → Statement Execution API | **extension** |
+| OAuth passthrough (Serverless, specific configs) | OAuth passthrough — Serverless + specific workspace config | EXT-6 works on both Serverless and Pro warehouses | `DatabricksQueryProvider` header swap | **extension** |
+| Per-user UC enforcement | UC applies when OBO is enabled | EXT-6 passes user token to all warehouse calls | UC column masking + row filters apply per user | **extension** |
 | SQL EXPLAIN dry-run | Internal | `QueryProvider.validate()` — always before `execute()` | SQL Warehouse EXPLAIN | **parity** |
 | 10,000 row result cap (default) | Internal limit | `QUERY_ROW_LIMIT` configurable, default 10,000 | Statement Execution API `limit` parameter | **parity** (configurable) |
 | Serverless or Pro warehouse required | Databricks limitation | Same requirement for Databricks impl; DuckDB for local | DuckDB (`DuckDBQueryProvider`) for dev | **extension** |
 | No non-SQL execution | Genie = SQL only | `QueryProvider` is one tool; agents can call MCP tools (EXT-5) | MCP servers via `MCPProvider` | **extension** |
 
-### What this means in practice
-SQL execution is functionally the same — both use the Statement Execution API. EXT-6 adds per-user token pass-through so that Unity Catalog column masking and row-level filters apply correctly per user, and it works across both Serverless and Pro warehouses. Genie's OBO capability is restricted to Serverless in specific configurations and is not the default.
+### When this matters
+SQL execution is functionally the same — both use the Statement Execution API. EXT-6 is relevant when per-user UC enforcement is needed across both Serverless and Pro warehouses, or when the deployment requires explicit token pass-through as part of integration requirements.
 
 ---
 
 ## Layer 6 — Persistence and state
 
-### What Genie does
-Genie persists Space configuration as a serialized JSON string in Databricks-managed storage (not directly accessible). Conversation history is stored internally. Feedback signals are stored internally. None of this is in a user-accessible location.
+### Standard Genie behavior
+Genie persists Space configuration, conversation history, and feedback signals in Databricks-managed storage, accessible through the Management API.
 
 ### The mapping
 
 | Genie concept | Databricks service | Tiri equivalent | Tiri service | Tiri status |
 |---|---|---|---|---|
-| Space config storage | Databricks-internal | `StoreProvider` → `DatabricksStoreProvider` | Delta table (`main.tiri.kv_store`) | **replaced** (user-accessible) |
-| Conversation history | Databricks-internal | `conv:{id}:turn:{id}` keys in `StoreProvider` | Delta table | **replaced** (user-accessible) |
+| Space config storage | Databricks-internal | `StoreProvider` → `DatabricksStoreProvider` | Delta table (`main.tiri.kv_store`) | **different** |
+| Conversation history | Databricks-internal | `conv:{id}:turn:{id}` keys in `StoreProvider` | Delta table | **different** |
 | Room→conversation index | — | `room:{id}:conversations` key | Delta table | **extension** |
-| Feedback signal storage | Databricks-internal | `feedback:{conv_id}:{turn_id}` keys | Delta table | **replaced** (user-accessible) |
+| Feedback signal storage | Databricks-internal | `feedback:{conv_id}:{turn_id}` keys | Delta table | **different** |
 | Example vector index | Databricks Vector Search (internal) | `VectorProvider` → `DatabricksVectorProvider` | Databricks Vector Search (Direct Access) | **parity** |
 | No local dev storage | Requires Databricks | `SQLiteStoreProvider` + `ChromaVectorProvider` | SQLite + ChromaDB | **extension** |
 
-### What this means in practice
-Genie persists configuration and conversation data in Databricks-managed storage, accessible through the Management API. Tiri stores everything in user-accessible Delta tables and Vector Search indexes that you own — queryable with SQL, portable, and directly inspectable. This is useful for compliance, auditability, and workspace migration scenarios.
+### When this matters
+For most deployments Genie's managed storage is sufficient. Tiri's user-owned Delta tables are useful when integration requirements call for direct SQL queryability of conversation history, compliance auditing, or portability across workspaces.
 
 ---
 
 ## Layer 7 — Retrieval (vector search)
 
-### What Genie does
+### Standard Genie behavior
 Genie uses vector search internally for a feature called "prompt matching" — it matches user question terms to column values to correct spelling and match categorical values. This is not the same as vector-indexing example SQL queries.
 
 ### The mapping
@@ -191,14 +191,14 @@ Genie uses vector search internally for a feature called "prompt matching" — i
 | No example SQL vector index | — | `ExampleIndexer` — embeds questions, retrieves top-k | Databricks Vector Search (Direct Access) | **extension** |
 | No semantic table search | — | `TableSelector` (EXT-2) — semantic similarity over table names+descriptions | Databricks Vector Search | **extension** |
 
-### What this means in practice
-Genie uses vector search narrowly — for value matching to handle typos and categorical lookups. Tiri uses it for something more important: retrieving the right few-shot examples. A room can have 100 example SQL queries, but only the 5 most semantically similar to the current question are injected into the SQL generation prompt. This is why Tiri can scale to large example sets without degrading quality — the retrieval step does the filtering.
+### When this matters
+Genie's prompt matching handles categorical value lookups effectively. Tiri additionally vector-indexes example SQL queries so only the top-k most semantically relevant are injected per question — useful when a room has a large example set and prompt size is a concern.
 
 ---
 
 ## Layer 8 — Feedback and improvement
 
-### What Genie does
+### Standard Genie behavior
 Genie has a thumbs-up/down UI. Thumbs-up turns are analyzed and proposed as new knowledge snippets for admin review. Admins can also mark generated SQL as correct or incorrect to create benchmarks. This is accessible via UI and partially via API (feedback endpoints are in Public Preview as of 2025).
 
 ### The mapping
@@ -211,17 +211,17 @@ Genie has a thumbs-up/down UI. Thumbs-up turns are analyzed and proposed as new 
 | Benchmarks (question/SQL pairs) | Genie UI + API | `RoomConfig.benchmarks: list[Benchmark]` | `StoreProvider` | **parity** |
 | Benchmark scoring | Genie UI | `BenchmarkRunner.run()` → `BenchmarkReport` | `RoomEngine.chat()` | **parity** |
 | Benchmark score explanation (added 2025) | Genie UI | `BenchmarkResult.error` field | — | **parity** |
-| No workspace query harvesting | — | EXT-9 (planned) — harvests existing workspace queries as candidate examples | Databricks SQL History API | **extension** |
+| Workspace query harvesting | — | EXT-9 (planned) — harvests existing workspace queries as candidate examples | Databricks SQL History API | **extension** |
 | Auto-suggested benchmarks (added 2025) | Genie UI | Not yet designed | — | planned |
 
-### What this means in practice
+### When this matters
 The feedback loop is conceptually equivalent. The difference is data ownership: Tiri's feedback data lives in a Delta table you own — queryable with SQL, portable, and auditable. You can run `SELECT * FROM main.tiri.kv_store WHERE key LIKE 'feedback:%'` to see every feedback signal ever recorded.
 
 ---
 
 ## Layer 9 — API surface
 
-### What Genie does
+### Standard Genie behavior
 Genie exposes two API types: a Conversation API (ask questions, get answers, stateful) and a Management API (create/update/delete Spaces, trigger indexing). Both use the Genie REST API at `/api/2.0/genie/spaces/...`. Rate limits apply: 20 QPM via UI, 5 QPM via API (Public Preview as of 2025).
 
 ### The mapping
@@ -232,41 +232,40 @@ Genie exposes two API types: a Conversation API (ask questions, get answers, sta
 | Stateful multi-turn | Internal conversation state | `conv:{id}:index` + history in `ContextPackage` | `StoreProvider` | **parity** |
 | Management API (CRUD) | `POST/GET/PATCH /api/2.0/genie/spaces/...` | `POST/GET/PATCH/DELETE /rooms/...` | FastAPI | **parity** |
 | SSE streaming | Not available in standard Genie | `GET /rooms/{id}/conversations/{cid}/messages/stream` | FastAPI SSE | **extension** |
-| 20 QPM rate limit | Databricks workspace limit | No platform rate limit — limited by your warehouse and LLM | LLM endpoint + SQL Warehouse | **extension** |
-| 5 QPM API rate limit | Databricks API tier limit | No rate limit on own deployment | — | **extension** |
+| Throughput | 20 QPM (UI), 5 QPM (API) | Limited by warehouse and LLM endpoint on own deployment | LLM endpoint + SQL Warehouse | **different** |
 | MCP server exposure | Genie exposed as MCP via AI Gateway (managed) | EXT-4 — Tiri exposes itself as MCP server | `fastapi-mcp` adapter | **extension** |
-| No MCP tool consumption | Genie Code only (not standard Spaces) | EXT-5 — agents can call external MCP tools mid-pipeline | `MCPProvider` ABC | **extension** |
+| MCP tool consumption | Available via Genie Code | EXT-5 — agents can call external MCP tools mid-pipeline | `MCPProvider` ABC | **extension** |
 
-### What this means in practice
-The API surface is broadly equivalent. As a self-deployed platform, Tiri's throughput is limited only by the SQL Warehouse concurrency and the LLM endpoint rate limits you configure. The SSE streaming endpoint adds progressive disclosure — users see the SQL being generated and the query running rather than waiting for a blocking response.
+### When this matters
+The API surface is broadly equivalent. As a self-deployed platform, Tiri's throughput is governed by the SQL Warehouse and LLM endpoint you configure. The SSE streaming endpoint adds progressive disclosure for integration scenarios that benefit from it.
 
 ---
 
 ## Layer 10 — Configuration and deployment
 
-### What Genie does
-Genie Spaces are configured via UI or the Management API. The entire configuration is one escaped JSON string (`serialized_space`). To update anything, you replace the whole string. There is no versioning, no Git integration, and no concept of environments (dev/staging/prod). The Management API is in Beta as of November 2025.
+### Standard Genie behavior
+Genie Spaces are configured via UI or the Management API. Configuration is stored as a JSON document in the Space. The Management API is in Beta as of November 2025.
 
 ### The mapping
 
 | Genie concept | Databricks service | Tiri equivalent | Tiri service | Tiri status |
 |---|---|---|---|---|
-| `serialized_space` JSON blob | Genie Management API | `RoomConfig` dataclass + JSON serialization | `StoreProvider` | **replaced** (typed, versioned) |
-| UI-only config editing | Genie UI | `tiri.toml` + `PATCH /rooms/{id}` API | Any editor + REST | **extension** |
-| No Git integration | — | Room config as JSON files in Git + `load-room` CLI | `tiri.cli` | **extension** |
-| No environment concept | — | `tiri.toml` per environment + `${VAR}` substitution | Environment variables | **extension** |
-| Single Databricks LLM only | — | `tiri.toml` provider registry — any LLM | OpenAI, Anthropic, Ollama, Databricks | **extension** |
-| No local development | Requires Databricks workspace | Full local stack: DuckDB + ChromaDB + SQLite + Ollama | Local providers | **extension** |
-| UC required for all data | Unity Catalog | `CatalogProvider` ABC — UC, Hive, static file, DuckDB | Any conforming impl | **extension** |
+| `serialized_space` JSON blob | Genie Management API | `RoomConfig` dataclass + JSON serialization | `StoreProvider` | **different** |
+| UI + API config editing | Genie UI | `tiri.toml` + `PATCH /rooms/{id}` API | Any editor + REST | **parity** |
+| Git-based room management | — | Room config as JSON files in Git + `load-room` CLI | `tiri.cli` | **extension** |
+| Environment management | — | `tiri.toml` per environment + `${VAR}` substitution | Environment variables | **extension** |
+| LLM vendor | Databricks-hosted | `tiri.toml` provider registry — any LLM | OpenAI, Anthropic, Ollama, Databricks | **extension** |
+| Local development stack | — | Full local stack: DuckDB + ChromaDB + SQLite + Ollama | Local providers | **extension** |
+| Catalog | Unity Catalog | `CatalogProvider` ABC — UC, Hive, static file, DuckDB | Any conforming impl | **extension** |
 
-### What this means in practice
+### When this matters
 Genie Spaces are configured and managed through the Databricks UI and Management API. Tiri is a self-deployed platform: the `tiri.toml` provider registry, `RoomConfig` JSON files checked into Git, the `load-room` CLI command, and `${VAR}` substitution for secrets together enable a CI/CD workflow for room management.
 
 ---
 
-## Summary: what Tiri is beyond Genie
+## Summary: when to use Tiri alongside Genie
 
-### Feature parity (Tiri does what Genie does, often with a cleaner interface)
+### Feature parity (Tiri covers the same ground as Genie, often with a cleaner interface)
 
 - Natural language to SQL (text-to-SQL)
 - Intent classification, clarification, visualization
@@ -277,30 +276,30 @@ Genie Spaces are configured and managed through the Databricks UI and Management
 - Management API (CRUD for rooms)
 - UC metadata (column comments, sample values)
 
-### Core extensions (in initial release)
+### Additional capabilities (scenarios where Tiri is the right choice)
 
-| Extension | What it adds | Key doc |
+| Extension | What it addresses | Key doc |
 |---|---|---|
-| EXT-1: Multi-query reasoning | Plans and executes multiple SQL queries, synthesizes a prose answer with uncertainty | [[extensions]] |
-| EXT-2: Dynamic table selection | Room can scope to a catalog; tables selected per-question by semantic similarity. No 30-table cap. | [[extensions]] |
-| EXT-3: Multi-model routing | Named provider registry; different models for different tasks; mix vendors freely | [[extensions]], [[configuration]] |
-| EXT-4: MCP server exposure | Tiri rooms are callable as MCP tools from Claude, Cursor, other agents | [[extensions]] |
-| EXT-5: MCP tool consumption | Agents can call external MCP servers mid-pipeline (Confluence, Glean, APIs) | [[extensions]] |
-| EXT-6: Per-user credentials | User's own token passed to SQL Warehouse; UC row-level security applies correctly | [[extensions]] |
-| EXT-7: Explicit uncertainty | Every answer states what the data supports, what it does not, and confidence level | [[extensions]] |
+| EXT-1: Multi-query reasoning | Questions requiring multiple queries, planning, and synthesis | [[extensions]] |
+| EXT-2: Dynamic table selection | Rooms with large or wildcard table scopes; no 30-table cap | [[extensions]] |
+| EXT-3: Multi-model routing | BYO LLM, vendor flexibility, cost-optimized routing per task | [[extensions]], [[configuration]] |
+| EXT-4: MCP server exposure | Tiri rooms callable as MCP tools from Claude, Cursor, other agents | [[extensions]] |
+| EXT-5: MCP tool consumption | Agents can call external MCP servers mid-pipeline | [[extensions]] |
+| EXT-6: Per-user credentials | Per-user UC row-level security enforcement; Pro warehouse OBO | [[extensions]] |
+| EXT-7: Explicit uncertainty | High-stakes audiences needing structured confidence and gap statements | [[extensions]] |
 
-### Platform extensions (beyond features)
+### Platform differences
 
 | Capability | Genie | Tiri |
 |---|---|---|
 | Metadata sources | UC only | Stacked: UC → YAML → Delta table → dbt → OpenMetadata → room override |
-| LLM vendors | Databricks only | Any: Databricks, OpenAI, Anthropic, Ollama |
+| LLM vendors | Databricks-hosted | Any: Databricks, OpenAI, Anthropic, Ollama |
 | Storage | Databricks-internal | User-owned Delta tables (queryable, portable) |
 | Local development | Not possible | Full local stack (DuckDB + SQLite + ChromaDB + Ollama) |
-| Throughput | 20 QPM (UI), 5 QPM (API) | Limited only by your warehouse and LLM endpoint |
+| Throughput | 20 QPM (UI), 5 QPM (API) | Limited by your warehouse and LLM endpoint |
 | Deployment | Hosted service | Self-deployed platform |
 | CI/CD | Not supported | `tiri.toml` + Git + `load-room` CLI |
-| Per-user security | Room creator credentials for all | Pass-through user token; UC security applies |
+| Per-user security | Room creator credentials by default | Pass-through user token; UC security applies |
 | Data ownership | Databricks-internal | Everything in your Delta tables |
 
 ### Planned extensions

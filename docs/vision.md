@@ -26,13 +26,11 @@ Read this before reading anything else.
 
 Databricks Genie is a well-executed natural language interface to structured data. It does what it is designed to do: take a question, generate SQL, and return a result. That capability is genuinely valuable and forms the foundation this system builds on.
 
-Tiri is an exploration of what becomes possible when that foundation is extended toward a harder problem — not retrieval, but reasoning.
+Tiri addresses the scenarios where that foundation needs to extend further — not retrieval questions, but reasoning questions.
 
 The distinction matters. Retrieval questions and reasoning questions look similar on the surface but require fundamentally different responses. "What was revenue last quarter?" is a retrieval question. One SQL query answers it. "How is the team performing against targets, and where is the biggest gap?" requires identifying the right tables, understanding what "targets" means in this context, running several queries, and synthesizing a coherent answer from the results. No single SQL query does that work.
 
-Genie is designed for the first class of question and handles it well. Tiri is an attempt to build a system capable of the second class — one that plans, retrieves, synthesizes, and tells the user honestly what it cannot determine. In that sense, Tiri is a form of validation: if it succeeds, it demonstrates that the Databricks platform — Genie's architecture, Unity Catalog, Model Serving, Vector Search — is a sound foundation for building serious data reasoning systems.
-
-Tiri is built on top of what Genie established, extended toward the reasoning use cases Genie was not designed to address.
+Genie is designed for the first class of question and handles it well. Tiri is built for the second class of question — one that plans, retrieves, synthesizes, and tells the user honestly what it cannot determine. In that sense, Tiri is a form of validation: if it succeeds, it demonstrates that the Databricks platform — Genie's architecture, Unity Catalog, Model Serving, Vector Search — is a sound foundation for building serious data reasoning systems. Tiri is designed for the scenarios where Genie's built-in behavior does not meet integration requirements: multi-query reasoning, BYO LLM, per-user credential enforcement, MCP composability, or explicit uncertainty for high-stakes audiences.
 
 ---
 

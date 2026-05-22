@@ -110,8 +110,7 @@ reasoning plan before it executes — not just after. Particularly valuable when
 the data has nuances the LLM may not correctly infer: complex view logic,
 fiscal calendar definitions, exception populations that should be excluded.
 
-This is categorically not possible in Genie. There is no reasoning plan to
-inspect.
+Genie does not expose a reasoning plan for inspection — the pipeline is managed by the platform. R3 adds a human-in-the-loop checkpoint between planning and execution in Tiri.
 
 **The gap:** EXT-1 adds multi-query reasoning (`PlanningAgent` →
 `ReasoningPlan` → `[SQLAgent × N]` → `SynthesisAgent`). R3 adds a

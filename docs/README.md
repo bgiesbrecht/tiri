@@ -61,7 +61,7 @@ README  (you are here)
 ├── [[configuration]]          ← all env vars, config.py, container wiring
 │     uses → providers, databricks_providers, local_providers
 │
-└── [[concept_map]]            ← Genie-to-Tiri mapping with Databricks service breakdown
+└── [[concept_map]]            ← Genie and Tiri — concept mapping and scenario guidance
       uses → vision, providers, agents, room_engine, knowledge_store, metadata, extensions, configuration, data_models, feedback
 
 [[roadmap]]                    ← Customer-validated capabilities tabled for future design
@@ -83,7 +83,7 @@ README  (you are here)
 | Intelligence | [[knowledge_store]], [[agents]], [[metadata]] | Context assembly, metadata stack, and LLM-driven reasoning |
 | Orchestration | [[room_engine]] | Wires agents into a coherent pipeline |
 | Surface | [[api]], [[feedback]] | External interface and improvement loop |
-| Extensions | [[extensions]] | What makes Tiri different from Genie |
+| Extensions | [[extensions]] | Additional capabilities for specific integration requirements |
 | Reference | [[concept_map]], [[roadmap]] | Genie-to-Tiri mapping and customer-validated future capabilities |
 | Demo | [[demo]] | TPC-H rooms, benchmarks, first-run guide |
 

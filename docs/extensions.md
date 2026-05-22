@@ -16,7 +16,7 @@ depends_on: [vision, providers, agents, room_engine, api]
 
 ## What this is
 
-The capabilities that make Tiri genuinely different from Genie — not incremental improvements but architectural extensions that require deliberate design. Each extension is a named, bounded unit of work with its own interface contract and test cases.
+The capabilities Tiri adds beyond what a standard Genie Space provides. These are designed for scenarios where integration requirements, table limits, LLM flexibility, multi-query reasoning, or per-user credential enforcement are needed. Each extension is a named, bounded unit of work with its own interface contract and test cases.
 
 Extensions are grouped by whether they are **core** (required for initial release) or **planned** (designed for but not blocking release). Every core extension must be implemented before Tiri is considered feature-complete relative to [[vision]].
 
@@ -28,11 +28,11 @@ The north star for all extensions: a junior analyst who reasons across multiple 
 
 ### EXT-1 — Multi-query reasoning
 
-**What Genie does:** One question → one SQL query → one result.
+**Standard Genie behavior:** One question → one SQL query → one result.
 
-**What Tiri does:** One question → reasoning plan → multiple SQL queries → synthesized answer.
+**What this extension adds:** One question → reasoning plan → multiple SQL queries → synthesized answer.
 
-**Why it matters:** Most business questions cannot be answered by a single query. "Why did churn increase last quarter?" requires at minimum: churn rate over time, churn by segment, churn by cohort, and possibly external factors like contract renewals. A single query answers none of these. Tiri must plan, retrieve, and synthesize.
+**When this is needed:** When most business questions require more than one query to answer fully. "Why did churn increase last quarter?" requires at minimum: churn rate over time, churn by segment, churn by cohort, and possibly external factors like contract renewals. A single query answers none of these. Tiri must plan, retrieve, and synthesize.
 
 **Interface — PlanningAgent:**
 
@@ -145,11 +145,11 @@ Single-query questions go through a one-step plan — no performance cost for si
 
 ### EXT-2 — Dynamic table selection
 
-**What Genie does:** Admin pre-selects up to 30 tables. Every question loads all of them into context.
+**Standard Genie behavior:** Admin pre-selects up to 30 tables. Every question loads all of them into context.
 
-**What Tiri does:** A room can be scoped to a catalog or schema. The `IntentAgent` dynamically selects the relevant tables per question using semantic search over table metadata.
+**What this extension adds:** A room can be scoped to a catalog or schema. The `IntentAgent` dynamically selects the relevant tables per question using semantic search over table metadata.
 
-**Why it matters:** Removes the 30-table ceiling entirely. Makes room configuration lighter — describe the domain, don't enumerate every table. Keeps prompts focused — only relevant schemas are injected.
+**When this is needed:** When the 30-table limit is a constraint, or when room configuration should describe a domain rather than enumerate every table.
 
 **Interface additions to `IntentAgent`:**
 
@@ -209,11 +209,11 @@ class RoomConfig:
 
 ### EXT-3 — Multi-model routing with provider registry
 
-**What Genie does:** One locked LLM for everything.
+**Standard Genie behavior:** Uses the Databricks-hosted LLM, managed by the platform.
 
-**What Tiri does:** A named provider registry allows multiple LLM backends to be declared simultaneously (Databricks, OpenAI, Anthropic, Ollama). Each agent task routes to a specific backend+model. Agents are unaware of routing — they receive a `LLMProvider` and the router is transparent.
+**What this extension adds:** A named provider registry allows multiple LLM backends to be declared simultaneously (Databricks, OpenAI, Anthropic, Ollama). Each agent task routes to a specific backend+model. Agents are unaware of routing — they receive a `LLMProvider` and the router is transparent.
 
-**Why it matters:** Intent classification does not need a 70B model. SQL generation benefits from the best SQL model regardless of vendor. Synthesis may warrant a different model entirely. Embedding is always separate. More fundamentally: locking to one LLM vendor is a structural constraint. The registry removes it.
+**When this is needed:** When integration requirements call for a specific LLM vendor, BYO model, cost optimization across tasks, or a model not available on Databricks Model Serving.
 
 **The three-level design:**
 
@@ -300,11 +300,11 @@ class RouterLLMProvider(LLMProvider):
 
 ### EXT-4 — MCP server exposure
 
-**What Genie does:** Exposes a Conversation API. Cannot be called as an MCP tool.
+**Standard Genie behavior:** Exposes a Conversation API and Genie-native integrations.
 
-**What Tiri does:** Exposes itself as an MCP server so any MCP-compatible client — Claude, Cursor, VS Code, other agents — can call a Tiri room as a tool.
+**What this extension adds:** Exposes Tiri as an MCP server so any MCP-compatible client — Claude, Cursor, VS Code, other agents — can call a Tiri room as a tool.
 
-**Why it matters:** Makes Tiri composable within larger agent systems. A Claude agent can call `tiri_query` as a tool alongside web search, document retrieval, and other capabilities. This is the integration model for the ecosystem.
+**When this is needed:** When MCP composability is required — for example, embedding Tiri as a data tool within a broader agentic workflow.
 
 **MCP tools to expose:**
 
@@ -356,11 +356,11 @@ async def tiri_room_schema(room_id: str) -> dict:
 
 ### EXT-5 — MCP tool consumption
 
-**What Genie does:** Cannot call external tools during a query.
+**Standard Genie behavior:** Query pipeline is self-contained; does not call external tools.
 
-**What Tiri does:** Agents can call registered MCP servers as tools during the reasoning pipeline — to resolve ambiguous terms, fetch external context, or look up documentation.
+**What this extension adds:** Agents can call registered MCP servers as tools during the reasoning pipeline — to resolve ambiguous terms, fetch external context, or look up documentation.
 
-**Why it matters:** Some questions require context that isn't in the database. "What does 'ARR' mean for our company?" might be in Confluence. "What is the regulatory threshold for this metric?" might be in a policy document. Tiri can resolve these by calling external MCP servers rather than failing or hallucinating.
+**When this is needed:** When questions require context from outside the database — business definitions in Confluence, regulatory thresholds in a policy document, or terminology from an internal knowledge base.
 
 **Interface additions to [[providers]]:**
 
@@ -430,11 +430,11 @@ class RoomConfig:
 
 ### EXT-6 — Per-user credential execution
 
-**What Genie does:** Embeds the room creator's credentials. All users execute queries as that one person.
+**Standard Genie behavior:** Executes queries using the Space creator's credentials by default (with limited OAuth passthrough available on Serverless warehouses in specific configurations).
 
-**What Tiri does:** Passes through the authenticated user's own credentials to `QueryProvider`. Unity Catalog row-level security and column masking apply correctly per user.
+**What this extension adds:** Passes through the authenticated user's own credentials to `QueryProvider`. Unity Catalog row-level security and column masking apply correctly per user.
 
-**Why it matters:** This is a governance requirement, not a feature. A user who cannot see PII columns should not be able to ask Tiri questions that expose them. The current Genie model breaks Unity Catalog's security model.
+**When this is needed:** When per-user UC enforcement is required — for example, when different users have different row-level or column-level access rights that must be respected at query time, or when deploying on Pro warehouses where Genie's limited OBO is not available.
 
 **Interface change to `QueryProvider`:**
 
@@ -481,11 +481,11 @@ The Statement Execution API accepts a token in the Authorization header. `Databr
 
 ### EXT-7 — Explicit uncertainty
 
-**What Genie does:** Returns an answer. Does not quantify confidence or name gaps.
+**Standard Genie behavior:** Returns a result without a structured uncertainty statement.
 
-**What Tiri does:** Every synthesized answer includes an explicit uncertainty statement — what the data supports, what it does not, and what would be needed to answer more completely.
+**What this extension adds:** Every synthesized answer includes an explicit uncertainty statement — what the data supports, what it does not, and what would be needed to answer more completely.
 
-**Why it matters:** This is the [[vision]] requirement most directly tied to the audience. Congressional staffers and executives presenting data need to know the limits of what they're presenting. See [[vision]] — "Tiri is a witness, not an analyst."
+**When this is needed:** When the audience will act on answers in high-stakes contexts and needs to know the limits of what the data supports. See [[vision]] — "Tiri is a witness, not an analyst."
 
 **Interface addition to `SynthesisAgent`:**
 
