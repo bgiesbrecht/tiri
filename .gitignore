@@ -35,7 +35,13 @@ docs/temp_instructions.*
 
 # Local benchmark validation artifacts (workspace-specific)
 demo/*.local.json
+demo/*.local.yaml
 data/
+
+# UI build artifacts
+ui/dist/
+ui/node_modules/
+ui/.vite/
 
 # OS junk
 .DS_Store

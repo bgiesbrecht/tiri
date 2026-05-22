@@ -35,6 +35,13 @@ class YAMLMetadataProvider(MetadataProvider):
 
     # ── helpers ────────────────────────────────────────────────────────────
 
+    async def enrich_schemas(
+        self,
+        schemas,
+        room_config,
+    ) -> None:
+        await self._delegate.enrich_schemas(schemas, room_config)
+
     @staticmethod
     def _load(name: str, path: str) -> StaticMetadataProvider:
         file = Path(path)
@@ -59,4 +66,10 @@ class YAMLMetadataProvider(MetadataProvider):
             raise MetadataProviderError(
                 f"YAMLMetadataProvider {name!r}: `tables` must be a mapping"
             )
-        return StaticMetadataProvider(name=name, data=data)
+        schemas_block = root.get("schemas") or {}
+        if not isinstance(schemas_block, dict):
+            raise MetadataProviderError(
+                f"YAMLMetadataProvider {name!r}: `schemas` must be a mapping "
+                f"(got {type(schemas_block).__name__})"
+            )
+        return StaticMetadataProvider(name=name, data=data, schemas=schemas_block)

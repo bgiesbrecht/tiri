@@ -64,6 +64,8 @@ README  (you are here)
 └── [[concept_map]]            ← Genie and Tiri — concept mapping and scenario guidance
       uses → vision, providers, agents, room_engine, knowledge_store, metadata, extensions, configuration, data_models, feedback
 
+[[technical-overview]]         ← Architecture overview for Databricks engineers and AI practitioners
+
 [[roadmap]]                    ← Customer-validated capabilities tabled for future design
       uses → extensions, vision, data_models, metadata, providers
 

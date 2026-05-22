@@ -140,6 +140,28 @@ class MetadataConflict:
 
 
 @dataclass
+class SchemaMeta:
+    """Metadata for a catalog schema (`catalog.schema`).
+
+    Describes the schema as a unit — useful for wildcard rooms (EXT-2)
+    where many tables share common context, and for multi-schema rooms
+    where schemas have different owners, freshness profiles, or trust
+    levels. SchemaMeta lives alongside TableMeta in the metadata stack;
+    every MetadataProvider may optionally enrich schemas via
+    `MetadataProvider.enrich_schemas` (default no-op).
+    """
+
+    full_name: str  # "catalog.schema" — e.g. "samples.tpch"
+    description: str = ""
+    domain: str = ""
+    freshness: str = ""
+    owner: str = ""
+    synonyms: list[str] = field(default_factory=list)
+    notes: str = ""
+    metadata_sources: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ColumnMeta:
     """Fully-resolved column metadata after the metadata stack runs."""
 
@@ -630,3 +652,9 @@ class ContextPackage:
     # Injected into HypothesisAgent's prompt as targeted hypothesis-generation
     # context. Empty for rooms without hypothesis mode configured — the rest
     # of the pipeline ignores this field, so default-empty is zero-cost.
+    schema_meta: dict[str, SchemaMeta] = field(default_factory=dict)
+    # Keyed by "catalog.schema" — e.g. {"samples.tpch": SchemaMeta(...)}.
+    # Populated by ContextBuilder from the MetadataProvider stack via
+    # `MetadataProvider.enrich_schemas`. Only schemas referenced by the
+    # selected `table_schemas` are present. Injected into the SQLAgent
+    # prompt as schema-level context above the per-table schemas.

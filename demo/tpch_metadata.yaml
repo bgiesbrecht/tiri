@@ -10,6 +10,25 @@
 # This file is room-independent — it describes the tables themselves.
 # Room-specific overrides belong in column_overrides in the room config.
 
+schemas:
+
+  tpch.sf1:
+    description: "TPC-H benchmark dataset at scale factor 1.
+      Approximately 6M line items, 1.5M orders, 200k customers,
+      10k suppliers, and 200k parts."
+    domain: supply_chain
+    freshness: static
+    owner: "tpch-benchmark"
+    notes: "All dates fall in 1992-01-01 through 1998-12-31. This is
+      synthetic benchmark data — never present it as production reality
+      in answers. Scale factor 1 (~1GB raw data). The same tables back
+      both the tpch-sales and tpch-supply rooms — sales/supply lenses
+      come from the room configs, not the data."
+    synonyms:
+      - TPC-H
+      - benchmark data
+      - wholesale supplier benchmark
+
 tables:
 
   tpch.sf1.lineitem:

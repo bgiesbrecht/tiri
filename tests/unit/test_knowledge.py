@@ -312,6 +312,134 @@ async def test_fetch_runs_providers_in_declared_order() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Schema-level metadata via MetadataFetcher.fetch_schemas / fetch_all
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class _SchemaMetadataDouble(MetadataProvider):
+    """Applies pre-configured schema-level data via enrich_schemas."""
+
+    def __init__(self, name: str, schema_data: dict[str, dict]) -> None:
+        self._name = name
+        self._schema_data = schema_data
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def enrich(self, tables, room_config) -> None:
+        pass  # table layer untouched
+
+    async def enrich_schemas(self, schemas, room_config) -> None:
+        for full_name, entry in self._schema_data.items():
+            s = schemas.get(full_name)
+            if s is None:
+                continue
+            if entry.get("description"):
+                s.description = entry["description"]
+            if entry.get("domain"):
+                s.domain = entry["domain"]
+            if entry.get("notes"):
+                s.notes = entry["notes"]
+            if self._name not in s.metadata_sources:
+                s.metadata_sources.append(self._name)
+
+
+@pytest.mark.asyncio
+async def test_fetch_schemas_extracts_unique_catalog_schema_prefixes() -> None:
+    catalog = _FakeCatalog(
+        tables={
+            "main.public.users": [],
+            "main.public.orders": [],
+            "main.private.audit": [],
+            "warehouse.metrics.events": [],
+        }
+    )
+    fetcher = MetadataFetcher(catalog, metadata_providers=[])
+    cfg = _room_config(
+        tables=[
+            "main.public.users",
+            "main.public.orders",
+            "main.private.audit",
+            "warehouse.metrics.events",
+        ]
+    )
+    schemas = await fetcher.fetch_schemas(cfg)
+    # Three distinct catalog.schema prefixes — public appears twice in tables
+    # but only once in the schemas dict.
+    assert set(schemas) == {"main.public", "main.private", "warehouse.metrics"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_schemas_applies_provider_stack_in_order() -> None:
+    catalog = _FakeCatalog(tables={"main.public.t": []})
+    p1 = _SchemaMetadataDouble("uc", {"main.public": {"description": "from uc"}})
+    p2 = _SchemaMetadataDouble("yaml", {"main.public": {"description": "from yaml"}})
+    fetcher = MetadataFetcher(catalog, metadata_providers=[p1, p2])
+    cfg = _room_config(tables=["main.public.t"])
+    schemas = await fetcher.fetch_schemas(cfg)
+    s = schemas["main.public"]
+    # Last writer wins.
+    assert s.description == "from yaml"
+    # Both providers tagged in order.
+    assert s.metadata_sources == ["uc", "yaml"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_returns_both_tables_and_schemas_consistently() -> None:
+    catalog = _FakeCatalog(tables={"main.public.t": [("id", "BIGINT")]})
+    p = _SchemaMetadataDouble(
+        "dom", {"main.public": {"description": "main.public schema"}}
+    )
+    fetcher = MetadataFetcher(catalog, metadata_providers=[p])
+    cfg = _room_config(tables=["main.public.t"])
+    tables, schemas = await fetcher.fetch_all(cfg)
+    assert set(tables) == {"main.public.t"}
+    assert set(schemas) == {"main.public"}
+    assert schemas["main.public"].description == "main.public schema"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# format_schema_context — agents/base.py helper for SQLAgent prompt
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_format_schema_context_returns_none_when_empty() -> None:
+    from tiri.engine.agents.base import format_schema_context
+    assert format_schema_context({}) == "(none)"
+
+
+def test_format_schema_context_returns_none_when_only_full_names_no_data() -> None:
+    """SchemaMeta entries with no descriptive fields shouldn't print anything."""
+    from tiri.engine.agents.base import format_schema_context
+    from tiri.data_models import SchemaMeta
+    schemas = {"main.public": SchemaMeta(full_name="main.public")}
+    assert format_schema_context(schemas) == "(none)"
+
+
+def test_format_schema_context_renders_description_and_tags() -> None:
+    from tiri.engine.agents.base import format_schema_context
+    from tiri.data_models import SchemaMeta
+    schemas = {
+        "main.public": SchemaMeta(
+            full_name="main.public",
+            description="public data",
+            domain="sales",
+            freshness="daily",
+            owner="team-x",
+            notes="dates always non-null",
+        )
+    }
+    out = format_schema_context(schemas)
+    assert "main.public" in out
+    assert "sales" in out
+    assert "daily" in out
+    assert "owner: team-x" in out
+    assert "public data" in out
+    assert "Notes: dates always non-null" in out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # ExampleIndexer — cases 7-9
 # ═══════════════════════════════════════════════════════════════════════════
 

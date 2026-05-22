@@ -618,3 +618,281 @@ async def test_feedback_propose_returns_examples_list() -> None:
         r = await c.post("/rooms/r1/feedback/propose")
     assert r.status_code == 200
     assert r.json() == {"proposed_examples": []}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Table metadata inspector — GET /rooms/{id}/tables[/{name}]
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class _TablesCatalog(CatalogProvider):
+    """Catalog with two tables, each carrying one starter column.
+
+    Used by the inspector tests so we have a real schema for the metadata
+    providers to enrich.
+    """
+
+    async def get_table_meta(self, full_name):
+        if full_name == "main.x.t":
+            return TableMeta(
+                full_name="main.x.t",
+                columns=[
+                    ColumnMeta(name="id", data_type="BIGINT"),
+                    ColumnMeta(name="status", data_type="STRING"),
+                ],
+            )
+        if full_name == "main.x.u":
+            return TableMeta(
+                full_name="main.x.u",
+                columns=[ColumnMeta(name="ref", data_type="BIGINT")],
+            )
+        from tiri.providers.base import TableNotFoundError as _TNF
+        raise _TNF(f"Table not found: {full_name}")
+
+    async def list_tables(self, c, s):
+        return []
+
+    async def list_schemas(self, c):
+        return []
+
+    async def search_tables(self, q, limit=10):
+        return []
+
+
+class _DomainMetadata(MetadataProvider):
+    """Sets descriptions + a synonym. Tags every touched table+column with its name."""
+
+    @property
+    def name(self):
+        return "domain_yaml"
+
+    async def enrich(self, tables, room_config):
+        for name, table in tables.items():
+            table.description = f"domain description for {name}"
+            table.synonyms.append("from_domain")
+            if "domain_yaml" not in table.metadata_sources:
+                table.metadata_sources.append("domain_yaml")
+            for col in table.columns:
+                col.description = f"domain says {col.name}"
+                col.metadata_source = "domain_yaml"
+
+
+class _CatalogAnnotations(MetadataProvider):
+    """Sets a contradictory description on main.x.t — produces a conflict record."""
+
+    @property
+    def name(self):
+        return "uc_annotations"
+
+    async def enrich(self, tables, room_config):
+        target = tables.get("main.x.t")
+        if target is None:
+            return
+        from tiri.data_models import MetadataConflict
+        if target.description:
+            target.conflicts.append(
+                MetadataConflict(
+                    table="main.x.t",
+                    column=None,
+                    field="description",
+                    values={
+                        "domain_yaml": target.description,
+                        "uc_annotations": "uc says hi",
+                    },
+                    resolved_to="uc_annotations",
+                )
+            )
+        target.description = "uc says hi"
+        if "uc_annotations" not in target.metadata_sources:
+            target.metadata_sources.append("uc_annotations")
+        # Column-level conflict on `status` — exercises the per-column slice.
+        for col in target.columns:
+            if col.name == "status" and col.description:
+                target.conflicts.append(
+                    MetadataConflict(
+                        table="main.x.t",
+                        column="status",
+                        field="description",
+                        values={
+                            "domain_yaml": col.description,
+                            "uc_annotations": "uc col says hi",
+                        },
+                        resolved_to="uc_annotations",
+                    )
+                )
+                col.description = "uc col says hi"
+                col.metadata_source = "uc_annotations"
+
+
+def _container_with_metadata(*providers) -> dict[str, Any]:
+    base = _container()
+    base["catalog"] = _TablesCatalog()
+    base["metadata_providers"] = list(providers)
+    return base
+
+
+def _build_app_with_metadata(*providers) -> tuple[FastAPI, dict[str, Any]]:
+    cfg = _config(auth_disabled=True)
+    container = _container_with_metadata(*providers)
+    app = create_app(cfg=cfg, container=container)
+    return app, container
+
+
+@pytest.mark.asyncio
+async def test_get_tables_returns_merged_metadata_for_every_room_table() -> None:
+    app, _ = _build_app_with_metadata(_DomainMetadata())
+    async with _client(app) as c:
+        await c.post("/rooms", json=_valid_room_body(tables=["main.x.t", "main.x.u"]))
+        r = await c.get("/rooms/r1/tables")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["room_id"] == "r1"
+    names = [t["name"] for t in body["tables"]]
+    assert names == ["main.x.t", "main.x.u"]
+    for table in body["tables"]:
+        assert table["description"] == f"domain description for {table['name']}"
+        assert "domain_yaml" in table["metadata_sources"]
+        assert table["conflicts"] == []
+        assert table["columns"]
+        for col in table["columns"]:
+            assert col["description"] == f"domain says {col['name']}"
+            assert col["metadata_sources"] == ["domain_yaml"]
+
+
+@pytest.mark.asyncio
+async def test_get_single_table_returns_merged_metadata() -> None:
+    app, _ = _build_app_with_metadata(_DomainMetadata())
+    async with _client(app) as c:
+        await c.post("/rooms", json=_valid_room_body(tables=["main.x.t", "main.x.u"]))
+        r = await c.get("/rooms/r1/tables/main.x.t")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "main.x.t"
+    assert body["description"] == "domain description for main.x.t"
+    assert {c["name"] for c in body["columns"]} == {"id", "status"}
+
+
+@pytest.mark.asyncio
+async def test_get_single_table_returns_404_when_not_in_room() -> None:
+    app, _ = _build_app_with_metadata()
+    async with _client(app) as c:
+        await c.post("/rooms", json=_valid_room_body(tables=["main.x.t"]))
+        r = await c.get("/rooms/r1/tables/main.x.other")
+    assert r.status_code == 404
+    assert r.json()["detail"]["error"] == "table_not_in_room"
+
+
+@pytest.mark.asyncio
+async def test_get_tables_returns_404_for_missing_room() -> None:
+    app, _ = _build_app_with_metadata()
+    async with _client(app) as c:
+        r = await c.get("/rooms/missing/tables")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_tables_lists_every_provider_that_touched_a_table() -> None:
+    app, _ = _build_app_with_metadata(
+        _DomainMetadata(), _CatalogAnnotations()
+    )
+    async with _client(app) as c:
+        await c.post("/rooms", json=_valid_room_body(tables=["main.x.t", "main.x.u"]))
+        r = await c.get("/rooms/r1/tables")
+    body = r.json()
+    by_name = {t["name"]: t for t in body["tables"]}
+    # main.x.t was touched by both providers (in order)
+    assert by_name["main.x.t"]["metadata_sources"] == ["domain_yaml", "uc_annotations"]
+    # main.x.u was touched only by the first provider
+    assert by_name["main.x.u"]["metadata_sources"] == ["domain_yaml"]
+
+
+@pytest.mark.asyncio
+async def test_get_tables_includes_schemas_key_with_merged_schema_metadata() -> None:
+    """API response MUST include schemas alongside tables, populated via
+    MetadataProvider.enrich_schemas across the configured stack."""
+    from tiri.data_models import SchemaMeta as _SM
+
+    class _SchemaDomainProvider(MetadataProvider):
+        @property
+        def name(self):
+            return "domain_yaml"
+
+        async def enrich(self, tables, room_config):
+            pass
+
+        async def enrich_schemas(self, schemas, room_config):
+            for full_name, s in schemas.items():
+                s.description = f"description of {full_name}"
+                s.domain = "supply_chain"
+                s.notes = "dates 1992-1998"
+                if self.name not in s.metadata_sources:
+                    s.metadata_sources.append(self.name)
+                _ = _SM  # touch import for the lint pass
+
+    app, _ = _build_app_with_metadata(_SchemaDomainProvider())
+    async with _client(app) as c:
+        await c.post("/rooms", json=_valid_room_body(tables=["main.x.t", "main.x.u"]))
+        r = await c.get("/rooms/r1/tables")
+    body = r.json()
+    assert "schemas" in body
+    schemas = body["schemas"]
+    # main.x is the only catalog.schema prefix referenced.
+    assert [s["name"] for s in schemas] == ["main.x"]
+    main_x = schemas[0]
+    assert main_x["description"] == "description of main.x"
+    assert main_x["domain"] == "supply_chain"
+    assert main_x["notes"] == "dates 1992-1998"
+    assert main_x["metadata_sources"] == ["domain_yaml"]
+
+
+@pytest.mark.asyncio
+async def test_get_tables_schemas_empty_when_no_provider_enriches_schemas() -> None:
+    """Backwards compat: providers without enrich_schemas don't pollute schemas."""
+    app, _ = _build_app_with_metadata(_DomainMetadata())
+    async with _client(app) as c:
+        await c.post("/rooms", json=_valid_room_body(tables=["main.x.t"]))
+        r = await c.get("/rooms/r1/tables")
+    body = r.json()
+    assert body["schemas"] == [
+        {
+            "name": "main.x",
+            "description": "",
+            "domain": "",
+            "freshness": "",
+            "owner": "",
+            "synonyms": [],
+            "notes": "",
+            "metadata_sources": [],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_tables_records_conflicts_at_table_and_column_level() -> None:
+    app, _ = _build_app_with_metadata(
+        _DomainMetadata(), _CatalogAnnotations()
+    )
+    async with _client(app) as c:
+        await c.post("/rooms", json=_valid_room_body(tables=["main.x.t"]))
+        r = await c.get("/rooms/r1/tables/main.x.t")
+    body = r.json()
+    # Table-scoped conflict on `description`
+    assert len(body["conflicts"]) == 1
+    table_conflict = body["conflicts"][0]
+    assert table_conflict["field"] == "description"
+    assert table_conflict["resolved_to"] == "uc_annotations"
+    assert set(table_conflict["values"]) == {"domain_yaml", "uc_annotations"}
+    # Column-scoped conflict slice — `status` column has a conflict; `id` does not
+    cols_by_name = {c["name"]: c for c in body["columns"]}
+    assert cols_by_name["id"]["conflicts"] == []
+    assert len(cols_by_name["status"]["conflicts"]) == 1
+    status_conflict = cols_by_name["status"]["conflicts"][0]
+    assert status_conflict["field"] == "description"
+    assert status_conflict["resolved_to"] == "uc_annotations"
+    # metadata_sources picks up both providers via the conflict record
+    assert set(cols_by_name["status"]["metadata_sources"]) == {
+        "domain_yaml",
+        "uc_annotations",
+    }
+    # `id` column was only touched by domain_yaml — single source, no conflict
+    assert cols_by_name["id"]["metadata_sources"] == ["domain_yaml"]

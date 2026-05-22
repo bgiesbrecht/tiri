@@ -343,6 +343,7 @@ def _build_engine(request: Request) -> RoomEngine:
         vector=container["vector"],
         store=container["store"],
         mcp_providers=container.get("mcp_providers", {}),
+        llm_backends=container.get("llm_backends", {}),
     )
 
 

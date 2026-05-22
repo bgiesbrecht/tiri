@@ -3,6 +3,29 @@
 # Prerequisites (one-time per workspace)
 # ─────────────────────────────────────────
 #
+# 0. Build the UI (must run before any deployment)
+#
+#    The Tiri UI is a Vite + React + TypeScript app under ui/. The
+#    FastAPI server serves the built bundle at /app, so the deployment
+#    bundle must include ui/dist/. From the repo root:
+#
+#      cd ui
+#      npm install
+#      npm run build
+#      cd ..
+#
+#    This produces ui/dist/ (gitignored) which app.yaml's bundle picks
+#    up. The build is ~5MB; rebuild whenever ui/src/ changes.
+#
+#    If your environment blocks the public npm registry, configure
+#    npm to use your org's internal mirror ONCE before `npm install`:
+#
+#      npm config set registry <your-internal-npm-mirror>
+#
+#    This writes registry=…/ to ~/.npmrc so all subsequent `npm install`
+#    calls go through the mirror. The pattern mirrors the pip index-url
+#    a corporate operator would already have configured for PyPI.
+#
 # 1. Provision Unity Catalog resources
 #
 #    The store and vector index live in main.tiri. Create the schema:

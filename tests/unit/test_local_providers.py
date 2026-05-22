@@ -20,10 +20,12 @@ from tiri.data_models import (
     LLMMessage,
     LLMResponse,
     RoomConfig,
+    SchemaMeta,
     TableMeta,
 )
 from tiri.providers.base import (
     LLMProviderError,
+    MetadataProvider,
     MetadataProviderError,
     TableNotFoundError,
 )
@@ -510,6 +512,143 @@ async def test_yaml_metadata_populates_declared_fields() -> None:
 async def test_yaml_metadata_missing_file_raises_provider_error() -> None:
     with pytest.raises(MetadataProviderError, match="not found"):
         YAMLMetadataProvider(name="x", path="/nonexistent/metadata.yaml")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Schema-level metadata — enrich_schemas
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _schemas_with_tpch() -> dict[str, SchemaMeta]:
+    return {"tpch.sf1": SchemaMeta(full_name="tpch.sf1")}
+
+
+@pytest.mark.asyncio
+async def test_static_metadata_enrich_schemas_populates_fields() -> None:
+    p = StaticMetadataProvider(
+        name="dom",
+        data={},
+        schemas={
+            "tpch.sf1": {
+                "description": "TPC-H",
+                "domain": "supply_chain",
+                "freshness": "static",
+                "owner": "team",
+                "notes": "dates 1992-1998",
+                "synonyms": ["TPC-H"],
+            }
+        },
+    )
+    schemas = _schemas_with_tpch()
+    await p.enrich_schemas(schemas, _room_config())
+    s = schemas["tpch.sf1"]
+    assert s.description == "TPC-H"
+    assert s.domain == "supply_chain"
+    assert s.freshness == "static"
+    assert s.owner == "team"
+    assert s.notes == "dates 1992-1998"
+    assert s.synonyms == ["TPC-H"]
+    assert s.metadata_sources == ["dom"]
+
+
+@pytest.mark.asyncio
+async def test_static_metadata_enrich_schemas_skips_unknown_schema_silently() -> None:
+    p = StaticMetadataProvider(
+        name="dom",
+        data={},
+        schemas={"other.schema": {"description": "X"}},
+    )
+    schemas = _schemas_with_tpch()
+    await p.enrich_schemas(schemas, _room_config())
+    # Untouched — same contract as enrich for tables.
+    assert schemas["tpch.sf1"].description == ""
+    assert schemas["tpch.sf1"].metadata_sources == []
+
+
+@pytest.mark.asyncio
+async def test_static_metadata_enrich_schemas_extends_synonyms_last_writer_wins() -> None:
+    p1 = StaticMetadataProvider(
+        name="p1",
+        data={},
+        schemas={"tpch.sf1": {"description": "v1", "synonyms": ["a", "b"]}},
+    )
+    p2 = StaticMetadataProvider(
+        name="p2",
+        data={},
+        schemas={"tpch.sf1": {"description": "v2", "synonyms": ["b", "c"]}},
+    )
+    schemas = _schemas_with_tpch()
+    await p1.enrich_schemas(schemas, _room_config())
+    await p2.enrich_schemas(schemas, _room_config())
+    s = schemas["tpch.sf1"]
+    # Scalar: last writer wins.
+    assert s.description == "v2"
+    # List: extend, no duplicates.
+    assert s.synonyms == ["a", "b", "c"]
+    # Both providers tagged.
+    assert s.metadata_sources == ["p1", "p2"]
+
+
+@pytest.mark.asyncio
+async def test_base_metadata_provider_enrich_schemas_is_no_op() -> None:
+    """ABC default is a no-op so existing providers stay backwards compatible."""
+    class _LegacyProvider(MetadataProvider):
+        @property
+        def name(self) -> str:
+            return "legacy"
+
+        async def enrich(self, tables, room_config):
+            pass
+        # Note: enrich_schemas NOT implemented — relies on the ABC default.
+
+    p = _LegacyProvider()
+    schemas = _schemas_with_tpch()
+    await p.enrich_schemas(schemas, _room_config())  # MUST NOT raise
+    assert schemas["tpch.sf1"].metadata_sources == []
+    assert schemas["tpch.sf1"].description == ""
+
+
+@pytest.mark.asyncio
+async def test_yaml_metadata_parses_schemas_block_when_present() -> None:
+    p = YAMLMetadataProvider(
+        name="yaml1", path=str(FIXTURES / "metadata_with_schemas.yaml")
+    )
+    schemas = _schemas_with_tpch()
+    await p.enrich_schemas(schemas, _room_config())
+    s = schemas["tpch.sf1"]
+    assert s.description == "TPC-H benchmark dataset"
+    assert s.domain == "supply_chain"
+    assert s.freshness == "static"
+    assert s.owner == "tpch-benchmark"
+    assert s.notes == "dates 1992-1998"
+    assert "TPC-H" in s.synonyms
+    assert "benchmark" in s.synonyms
+    assert s.metadata_sources == ["yaml1"]
+
+
+@pytest.mark.asyncio
+async def test_yaml_metadata_without_schemas_block_is_backwards_compatible() -> None:
+    """Existing YAML files (no `schemas` key) MUST not break."""
+    p = YAMLMetadataProvider(name="yaml1", path=str(FIXTURES / "metadata.yaml"))
+    # enrich_schemas runs but leaves the schema untouched (no schemas block).
+    schemas = _schemas_with_tpch()
+    await p.enrich_schemas(schemas, _room_config())
+    assert schemas["tpch.sf1"].metadata_sources == []
+    # And the existing tables-only behavior still works.
+    tables = _tables_with_lineitem()
+    await p.enrich(tables, _room_config())
+    assert tables["tpch.sf1.lineitem"].description == "Line items on customer orders"
+
+
+@pytest.mark.asyncio
+async def test_yaml_metadata_rejects_schemas_as_list() -> None:
+    """`schemas` must be a mapping, not a list — fail loudly on misconfig."""
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        f.write("schemas:\n  - just\n  - a\n  - list\ntables: {}\n")
+        path = f.name
+    with pytest.raises(MetadataProviderError, match="`schemas` must be a mapping"):
+        YAMLMetadataProvider(name="bad", path=path)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

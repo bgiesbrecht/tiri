@@ -18,6 +18,7 @@ from tiri.data_models import (
     ExampleSQL,
     JoinSpec,
     Metric,
+    SchemaMeta,
     SqlSnippet,
     TableMeta,
 )
@@ -91,6 +92,45 @@ def format_metric_list(metrics: list[Metric]) -> str:
         lines.append(f"{m.display_name} ({m.name}) — {desc}")
         if m.synonyms:
             lines.append(f"  Synonyms: {', '.join(m.synonyms)}")
+    return "\n".join(lines)
+
+
+def format_schema_context(schemas: dict[str, SchemaMeta]) -> str:
+    """Render schema-level metadata for SQLAgent / IntentAgent prompts.
+
+    Schemas are the `catalog.schema` units shared by multiple tables.
+    Useful for wildcard rooms (EXT-2) and rooms where schemas have
+    different owners, freshness profiles, or trust levels. Returns
+    "(none)" when the metadata stack contributed nothing — keeps the
+    prompt valid even when no provider supplies schema data.
+    """
+    if not schemas:
+        return "(none)"
+    populated = {
+        name: s
+        for name, s in schemas.items()
+        if s.description or s.domain or s.freshness or s.owner or s.notes
+    }
+    if not populated:
+        return "(none)"
+    lines: list[str] = []
+    for name in sorted(populated):
+        s = populated[name]
+        head = f"{name}"
+        tags: list[str] = []
+        if s.domain:
+            tags.append(s.domain)
+        if s.freshness:
+            tags.append(s.freshness)
+        if s.owner:
+            tags.append(f"owner: {s.owner}")
+        if tags:
+            head += f" [{', '.join(tags)}]"
+        if s.description:
+            head += f" — {s.description}"
+        lines.append(head)
+        if s.notes:
+            lines.append(f"  Notes: {s.notes}")
     return "\n".join(lines)
 
 

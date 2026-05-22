@@ -16,9 +16,30 @@ from tiri.data_models import LLMMessage, LLMResponse
 from tiri.providers.base import LLMProvider, LLMProviderError
 
 
-_DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+_DEFAULT_TIMEOUT = httpx.Timeout(300.0, connect=10.0)
+# Read timeout bumped from 60s to 300s for reasoning models. GPT-5.5 Pro on
+# the Databricks Responses API runs `effort: high` by default and can spend
+# multiple minutes on internal reasoning before producing a single token of
+# output. The connect timeout stays at 10s since establishing TCP isn't
+# affected by the model's reasoning budget.
 _MAX_429_RETRIES = 3
-_MAX_5XX_RETRIES = 1
+_MAX_5XX_RETRIES = 2
+# Bumped from 1 to 2 (3 total attempts) for the Responses-API path.
+# Reasoning-model upstreams (GPT-5 family on /serving-endpoints/responses)
+# have higher latency variance than Chat Completions endpoints — the
+# proxy intermittently returns HTTP 502 INTERNAL_ERROR when the upstream
+# takes too long to respond. A single retry isn't generous enough; the
+# pattern was reproduced 2/2 runs against tpch-sales on GPT-5.5 Pro
+# (same question, same 502, both runs). The wider retry window catches
+# the recovery without burning the whole turn.
+
+# Reasoning models on the Responses API charge BOTH reasoning and final
+# output against `max_output_tokens`. The agent's caller asks for e.g.
+# 2048 tokens of output, but the model may consume that entire budget on
+# reasoning and leave none for the actual message. Bump the budget on the
+# Responses API path so reasoning has its own headroom AND the requested
+# output budget still fits.
+_RESPONSES_API_TOKEN_FLOOR = 8192
 
 
 class DatabricksLLMProvider(LLMProvider):
@@ -66,27 +87,43 @@ class DatabricksLLMProvider(LLMProvider):
             data = await self._post_json(
                 f"/serving-endpoints/{endpoint}/invocations", body
             )
+            return _from_chat_completions(data)
         except LLMProviderError as exc:
+            s = str(exc)
             # Some Databricks-hosted reasoning endpoints (claude-opus-4-x)
             # reject the `temperature` parameter at the proxy layer:
             # `Model ... does not support the temperature parameter.`
             # Retry once with temperature stripped — preserves determinism
             # on every other endpoint that accepts it.
-            if "does not support the temperature parameter" in str(exc):
+            if "does not support the temperature parameter" in s:
                 body.pop("temperature", None)
                 data = await self._post_json(
                     f"/serving-endpoints/{endpoint}/invocations", body
                 )
-            else:
-                raise
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as e:
-            raise LLMProviderError(
-                f"Unexpected completion response shape: {data!r}"
-            ) from e
-        usage = data.get("usage", {}) or {}
-        return LLMResponse(content=content, usage=dict(usage), raw=data)
+                return _from_chat_completions(data)
+            # GPT-5 family on Databricks routes through the Responses API,
+            # not Chat Completions. The proxy returns a 400 directing us
+            # to /serving-endpoints/responses; we retry through that path
+            # with the alternate request shape. The Responses API also
+            # doesn't honor `temperature` on reasoning models, so we omit
+            # it here unconditionally (the Chat Completions path keeps
+            # passing it for backends that do honor it).
+            if (
+                "only supports the Responses API" in s
+                or "/serving-endpoints/responses" in s
+            ):
+                responses_body = {
+                    "model": endpoint,
+                    "input": _normalize_messages(messages),
+                    "max_output_tokens": max(
+                        max_tokens, _RESPONSES_API_TOKEN_FLOOR
+                    ),
+                }
+                data = await self._post_json(
+                    "/serving-endpoints/responses", responses_body
+                )
+                return _from_responses_api(data)
+            raise
 
     async def stream(
         self,
@@ -201,6 +238,54 @@ def _parse_sse_chunk(line: str) -> str:
         return data["choices"][0]["delta"].get("content", "") or ""
     except (KeyError, IndexError, TypeError):
         return ""
+
+
+def _from_chat_completions(data: dict) -> LLMResponse:
+    """Parse a standard Chat Completions response shape."""
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise LLMProviderError(
+            f"Unexpected completion response shape: {data!r}"
+        ) from e
+    usage = data.get("usage", {}) or {}
+    return LLMResponse(content=content, usage=dict(usage), raw=data)
+
+
+def _from_responses_api(data: dict) -> LLMResponse:
+    """Parse a Responses API response (GPT-5 family).
+
+    The output is a list of items mixing `reasoning` and `message`
+    entries. The assistant text lives on the message item's content
+    block where `type == "output_text"`. Reasoning items have no
+    user-visible content and MUST be skipped. Usage keys are renamed
+    so callers see the same `prompt_tokens` / `completion_tokens`
+    shape as Chat Completions.
+    """
+    content = ""
+    for item in data.get("output", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "message":
+            continue  # skip "reasoning" items and anything else
+        for block in item.get("content", []) or []:
+            if isinstance(block, dict) and block.get("type") == "output_text":
+                text = block.get("text", "")
+                if text:
+                    content = text
+                    break
+        if content:
+            break
+    if not content:
+        raise LLMProviderError(
+            f"Responses API returned no output_text content: {data!r}"
+        )
+    raw_usage = data.get("usage", {}) or {}
+    usage = {
+        "prompt_tokens": raw_usage.get("input_tokens", 0),
+        "completion_tokens": raw_usage.get("output_tokens", 0),
+    }
+    return LLMResponse(content=content, usage=usage, raw=data)
 
 
 def _normalize_messages(messages: list[LLMMessage]) -> list[dict]:

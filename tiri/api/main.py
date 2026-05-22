@@ -12,16 +12,19 @@ provider references.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from tiri.config import Config, ConfigurationError
 from tiri.container import build_container
 from tiri.engine.room_engine import RoomNotFoundError
 from tiri.api.mcp import server as mcp_server
+from tiri.api.routes import config as config_routes
 from tiri.api.routes import conversations, feedback, management
 
 
@@ -59,9 +62,46 @@ def create_app(
     )
     app.include_router(feedback.router, prefix="/rooms", tags=["feedback"])
     app.include_router(mcp_server.router, prefix="/mcp", tags=["mcp"])
+    app.include_router(
+        config_routes.router, prefix="/config", tags=["config"]
+    )
 
+    _mount_ui(app)
     _register_exception_handlers(app)
     return app
+
+
+def _mount_ui(app: FastAPI) -> None:
+    """Mount the built UI at /app. The Vite build outputs to ui/dist/ with
+    base="/app/" so all asset URLs are already prefixed. If the directory
+    doesn't exist (developer running `pytest` without an `npm run build`),
+    skip mounting — the API still works, just no `/app` route. In
+    production deployments, the build is a prerequisite (see deploy/README).
+    """
+    ui_dist = Path(__file__).resolve().parent.parent.parent / "ui" / "dist"
+    if not ui_dist.exists() or not (ui_dist / "index.html").exists():
+        _log.info(
+            "ui/dist/ not built; skipping /app mount. Run `cd ui && npm run build`."
+        )
+        return
+
+    # Serve hashed assets verbatim under /app/assets/...
+    app.mount(
+        "/app/assets",
+        StaticFiles(directory=ui_dist / "assets"),
+        name="ui-assets",
+    )
+
+    @app.get("/app", include_in_schema=False)
+    @app.get("/app/", include_in_schema=False)
+    @app.get("/app/{path:path}", include_in_schema=False)
+    async def _serve_ui_index(path: str | None = None) -> FileResponse:
+        # SPA fallback: every /app/* path returns index.html so the
+        # client-side router (tab state) can take over. The asset mount
+        # above wins for /app/assets/*, so this only catches non-asset
+        # routes.
+        _ = path  # SPA — path content is irrelevant server-side
+        return FileResponse(ui_dist / "index.html")
 
 
 def _split_origins(spec: str) -> list[str]:

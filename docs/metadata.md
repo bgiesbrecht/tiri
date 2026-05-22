@@ -145,6 +145,20 @@ Reads a YAML file containing human-authored table and column metadata. Typically
 # Human-maintained metadata. All fields are optional.
 # This file is room-independent — it describes tables, not rooms.
 
+# Schema-level metadata (optional — backwards compatible)
+# Keyed by "catalog.schema". Use for context that applies to every
+# table in the schema: shared date ranges, freshness, owner team,
+# trust level. Consumed by the SQLAgent prompt's schema-context
+# section and surfaced in the UI Tables tab.
+schemas:
+  tpch.sf1:
+    description: "TPC-H benchmark dataset at scale factor 1."
+    domain: supply_chain
+    freshness: static
+    owner: "tpch-benchmark"
+    notes: "All dates 1992-1998. Synthetic benchmark data — not production."
+    synonyms: [TPC-H, benchmark data]
+
 tables:
   tpch.sf1.lineitem:
     description: "Individual line items on customer orders. One row per product per order."
@@ -295,6 +309,58 @@ class RoomConfig:
 
 ---
 
+### OntologyMetadataProvider (planned — R12)
+
+Reads an OWL/RDFS/RDF graph and produces `TableMeta` enrichments from formal ontology. Bridges Tiri's metadata stack to enterprise semantic catalogs (Collibra, Microsoft Purview, Apache Atlas) and any system that exports RDF/OWL.
+
+**What it provides:** `description` from `rdfs:comment` or `skos:definition`, `grain` from `tiri:grain`, `ColumnMeta.synonyms` from `skos:altLabel` on properties, `ColumnMeta.semantic_type` from `tiri:semanticType`, `recommended_joins` inferred from `rdfs:domain` / `rdfs:range` relationships, and `data_quality` / `data_quality_note` from `tiri:dataQuality` assertions.
+
+**Join path inference:** With OWL property domain/range declarations, multi-hop join paths can be inferred from the graph rather than enumerated in `RoomConfig.joins`. A SPARQL property path query traverses `supplier → nation → region` automatically if the ontology declares the relationships.
+
+**Confidence calibration:** `tiri:dataQuality` assertions on tables flow into `TableMeta.data_quality` and `data_quality_note`. `SynthesisAgent` uses these when assigning confidence — a result from a `PartiallyStale` table is automatically `medium` or `low`, not because of a prompt heuristic, but because the ontology asserts it.
+
+```turtle
+tpch:lineitem tiri:dataQuality tiri:Complete .
+tpch:forecast tiri:dataQuality tiri:PartiallyStale ;
+    tiri:stalenessNote "Updated monthly. May lag by up to 4 weeks." .
+```
+
+**Configuration in `tiri.toml`:**
+```toml
+[[metadata.providers.stack]]
+name      = "enterprise_ontology"
+type      = "ontology"
+source    = "./metadata/enterprise.ttl"     # Turtle file or SPARQL endpoint URL
+namespace = "https://data.mycompany.com/ontology#"
+```
+
+See roadmap R12 for the full design, interoperability targets, and blocking dependencies.
+
+---
+
+### SkosTermResolver (planned — R11)
+
+Not a `MetadataProvider` — a separate component in `tiri/knowledge/` that resolves question terms against a W3C SKOS controlled vocabulary before `IntentAgent` runs. Where `OntologyMetadataProvider` enriches table and column metadata, `SkosTermResolver` enriches the *question* — mapping ambiguous business terms to their canonical definitions and SQL expressions before any LLM call.
+
+**What SKOS provides:** `skos:prefLabel` (canonical term), `skos:altLabel` (synonyms — "top line", "sales", "income" all resolve to "revenue"), `skos:definition` (precise definition), `skos:scopeNote` (scope constraints and "don't do this" notes), `skos:narrower`/`skos:broader` (concept hierarchy).
+
+Tiri extends SKOS with one custom property: `tiri:sqlExpression` — the SQL fragment that implements the concept. This makes the vocabulary executable, not just descriptive.
+
+```turtle
+tiri:revenue a skos:Concept ;
+    skos:prefLabel "revenue" ;
+    skos:altLabel "top line", "sales", "income" ;
+    skos:definition "Net revenue after discounts" ;
+    skos:scopeNote "Never use orders.o_totalprice — it is pre-discount." ;
+    tiri:sqlExpression "SUM(l_extendedprice * (1 - l_discount))" .
+```
+
+**Integration point:** `RoomConfig.vocabulary_uri` points to a Turtle file or SPARQL endpoint. `ContextBuilder` loads it once and passes a `SkosTermResolver` instance. Term resolutions are injected into `ContextPackage` as structured definitions before agent dispatch.
+
+See roadmap R11 for the full design, sample vocabulary, and implementation notes.
+
+---
+
 ### StaticMetadataProvider (local dev / testing)
 
 In-memory provider constructed from a Python dict. No file I/O. Used in tests and local development where you want predictable metadata without files.
@@ -346,3 +412,5 @@ After the full stack runs, `ContextPackage.table_schemas` contains the resolved 
 | 10 | `MetadataFetcher` with empty stack | MUST return TableMeta objects with only physical schema fields populated |
 | 11 | `StaticMetadataProvider` | MUST be constructable with no I/O |
 | 12 | Any provider | MUST use `list.extend()` for list fields, never `list =` (assignment would replace) |
+| 13 | `OntologyMetadataProvider` (R12) with `tiri:dataQuality tiri:PartiallyStale` | MUST populate `TableMeta.data_quality` and `data_quality_note` |
+| 14 | `SkosTermResolver` (R11) with `skos:altLabel "top line"` | MUST resolve to concept with `skos:prefLabel "revenue"` and `tiri:sqlExpression` |

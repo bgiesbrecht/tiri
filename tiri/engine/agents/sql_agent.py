@@ -23,6 +23,7 @@ from tiri.engine.agents.base import (
     format_joins,
     format_mcp_context,
     format_metrics_for_sql,
+    format_schema_context,
     format_schemas_for_sql,
     format_snippets_for_sql,
     load_template,
@@ -65,6 +66,7 @@ class SQLAgent:
             text_instruction=context.text_instruction or "(none)",
             default_filters=format_default_filters(context.default_filters),
             mcp_context=format_mcp_context(context.mcp_context),
+            schema_context=format_schema_context(context.schema_meta),
             table_schemas=format_schemas_for_sql(
                 relevant_table_names, context.table_schemas
             ),

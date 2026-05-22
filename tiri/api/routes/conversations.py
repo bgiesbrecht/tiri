@@ -28,6 +28,7 @@ def _engine(request: Request) -> RoomEngine:
         vector=container["vector"],
         store=container["store"],
         mcp_providers=container.get("mcp_providers", {}),
+        llm_backends=container.get("llm_backends", {}),
         history_window=cfg.history_window,
         intent_threshold=cfg.intent_threshold,
         sql_max_retries=cfg.sql_max_retries,
@@ -76,12 +77,14 @@ async def send_message(
                 "message": "`question` must be a non-empty string",
             },
         )
+    model_override = body.get("model_override") or None
     engine = _engine(request)
     turn = await engine.chat(
         room_id=room_id,
         conversation_id=conv_id,
         question=question,
         user_token=user_token,
+        model_override=model_override if isinstance(model_override, str) else None,
     )
     return asdict(turn)
 
@@ -92,10 +95,16 @@ async def stream_messages(
     room_id: str,
     conv_id: str,
     question: str,
+    model_override: str | None = None,
     user_token: str | None = Depends(auth_token),
 ) -> StreamingResponse:
     """SSE endpoint. The question comes in as a query parameter — GET
     requests don't have bodies. The non-streaming POST takes it in the body.
+
+    `model_override` is also a query parameter (same constraint — no body
+    on GET). UI passes `?question=…&model_override=anthropic::claude-sonnet-4-6`
+    to pin a single chat invocation to a specific backend for side-by-side
+    comparison.
     """
     if not question.strip():
         raise HTTPException(
@@ -113,6 +122,7 @@ async def stream_messages(
             conversation_id=conv_id,
             question=question,
             user_token=user_token,
+            model_override=model_override,
         ):
             yield f"data: {json.dumps(event)}\n\n"
 

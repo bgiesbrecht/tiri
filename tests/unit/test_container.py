@@ -495,13 +495,14 @@ def test_build_container_all_local_does_no_network(
     assert container["store"] is stubbed_factories["store"][0]
 
 
-def test_build_container_returns_all_seven_entries(
+def test_build_container_returns_expected_entries(
     stubbed_factories: dict[str, list],
 ) -> None:
     cfg = _single_backend_config()
     container = build_container(cfg)
     assert set(container) == {
         "llm",
+        "llm_backends",
         "catalog",
         "metadata_providers",
         "query",
@@ -513,6 +514,10 @@ def test_build_container_returns_all_seven_entries(
     # EXT-5: registry exists, default empty. Config-driven population is L1
     # in fixme.md — until then deployments with MCP wire it externally.
     assert container["mcp_providers"] == {}
+    # llm_backends is a dict keyed by backend name (used by the UI's
+    # model_override path to wrap a specific backend in SingleModelLLMProvider).
+    assert isinstance(container["llm_backends"], dict)
+    assert set(container["llm_backends"]) == set(cfg.llm_backends)
 
 
 def test_build_container_metadata_stack_preserves_order(

@@ -68,9 +68,10 @@ class ContextBuilder:
         else:
             selected_tables = None  # MetadataFetcher uses config.tables
 
-        # 1. Physical + semantic metadata for the selected tables.
+        # 1. Physical + semantic metadata for the selected tables, plus
+        #    schema-level metadata for every `catalog.schema` referenced.
         fetcher = MetadataFetcher(self._catalog, self._metadata_providers)
-        table_schemas = await fetcher.fetch(
+        table_schemas, schema_meta = await fetcher.fetch_all(
             config, query=self._query, tables_override=selected_tables
         )
 
@@ -106,4 +107,5 @@ class ContextBuilder:
             conversation_history=trimmed_history,
             table_selection_method=selection_method(config.tables),
             domain_knowledge=list(config.domain_knowledge),
+            schema_meta=schema_meta,
         )

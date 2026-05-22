@@ -6,10 +6,20 @@ from tiri.data_models import (
     ColumnMeta,
     MetadataConflict,
     RoomConfig,
+    SchemaMeta,
     TableMeta,
 )
 from tiri.providers.base import MetadataProvider
 
+
+_SCALAR_SCHEMA_FIELDS = (
+    "description",
+    "domain",
+    "freshness",
+    "owner",
+    "notes",
+)
+_LIST_SCHEMA_FIELDS = ("synonyms",)
 
 _SCALAR_TABLE_FIELDS = (
     "description",
@@ -51,9 +61,15 @@ class StaticMetadataProvider(MetadataProvider):
       }
     """
 
-    def __init__(self, name: str, data: dict) -> None:
+    def __init__(
+        self,
+        name: str,
+        data: dict,
+        schemas: dict | None = None,
+    ) -> None:
         self._name = name
         self._data: dict[str, dict] = dict(data or {})
+        self._schemas: dict[str, dict] = dict(schemas or {})
 
     @property
     def name(self) -> str:
@@ -71,6 +87,43 @@ class StaticMetadataProvider(MetadataProvider):
             _apply_table_entry(table_meta, entry, source=self._name)
             if self._name not in table_meta.metadata_sources:
                 table_meta.metadata_sources.append(self._name)
+
+    async def enrich_schemas(
+        self,
+        schemas: dict[str, SchemaMeta],
+        room_config: RoomConfig,
+    ) -> None:
+        for full_name, schema_meta in schemas.items():
+            entry = self._schemas.get(full_name)
+            if entry is None:
+                continue  # silently skip — same contract as enrich()
+            _apply_schema_entry(schema_meta, entry, source=self._name)
+            if self._name not in schema_meta.metadata_sources:
+                schema_meta.metadata_sources.append(self._name)
+
+
+def _apply_schema_entry(
+    schema_meta: SchemaMeta, entry: dict, *, source: str
+) -> None:
+    for field_name in _SCALAR_SCHEMA_FIELDS:
+        new = entry.get(field_name)
+        if new is None or new == "":
+            continue
+        # Schemas don't currently carry a conflicts list (kept simple
+        # since multi-source schema overrides are rare); last writer
+        # wins, prior value is silently replaced. If a use case for
+        # schema conflict tracking emerges, add a conflicts field on
+        # SchemaMeta and mirror the table pattern here.
+        setattr(schema_meta, field_name, new)
+
+    for field_name in _LIST_SCHEMA_FIELDS:
+        new = entry.get(field_name)
+        if not new:
+            continue
+        existing = getattr(schema_meta, field_name)
+        for item in new:
+            if item not in existing:
+                existing.append(item)
 
 
 def _apply_table_entry(

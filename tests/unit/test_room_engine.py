@@ -245,6 +245,7 @@ def _build_engine(
     store: _Store | None = None,
     vector: _Vector | None = None,
     metadata_providers: list[MetadataProvider] | None = None,
+    llm_backends: dict | None = None,
 ) -> tuple[RoomEngine, _Store, _Query, _Vector]:
     store = store or _Store()
     query = query or _Query()
@@ -257,6 +258,7 @@ def _build_engine(
         query=query,
         vector=vector,
         store=store,
+        llm_backends=llm_backends or {},
         history_window=10,
         intent_threshold=0.7,
         sql_max_retries=3,
@@ -1259,3 +1261,124 @@ async def test_stream_chat_emits_hypotheses_event_when_enabled() -> None:
     assert hyp_event["confidence"] == "low"
     assert hyp_event["disclaimer"]
     assert len(hyp_event["hypotheses"]) == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UI support — model_override + SingleModelLLMProvider
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_model_override_routes_to_specified_backend() -> None:
+    """When the UI passes `model_override='backend_name::model_name'`,
+    RoomEngine MUST construct a SingleModelLLMProvider wrapping the named
+    backend (looked up in `llm_backends`) and use it instead of the router.
+    Verified by giving the override backend a distinct fingerprint."""
+    router_llm = _LLM(
+        {
+            "intent": [_intent_json("sql_query", tables=["main.x.t"], confidence=0.9)],
+            "sql": ["SELECT 1"],
+            "viz_summary": ["s"],
+        }
+    )
+    # The override backend has a distinct response for `sql` so we can
+    # detect which one was invoked.
+    override_backend = _LLM(
+        {
+            "intent": [_intent_json("sql_query", tables=["main.x.t"], confidence=0.95)],
+            "sql": ["SELECT 'overridden' AS marker"],
+            "viz_summary": ["s"],
+        }
+    )
+    engine, store, query, _v = _build_engine(
+        router_llm,
+        llm_backends={"alt": override_backend},
+    )
+    _seed_room(store, _make_room())
+
+    turn = await engine.chat(
+        "r1", "c1", "How many?", model_override="alt::some-model"
+    )
+    # The override backend's SQL fingerprint appears in the warehouse exec log.
+    assert query.executed == ["SELECT 'overridden' AS marker"]
+    assert turn.sql == "SELECT 'overridden' AS marker"
+
+
+@pytest.mark.asyncio
+async def test_model_override_none_uses_router(caplog: pytest.LogCaptureFixture) -> None:
+    """Default behavior (no override): the router is used. No WARNING fires."""
+    import logging
+    llm = _LLM(
+        {
+            "intent": [_intent_json("sql_query", tables=["main.x.t"], confidence=0.9)],
+            "sql": ["SELECT id FROM main.x.t"],
+            "viz_summary": ["s"],
+        }
+    )
+    engine, store, query, _v = _build_engine(llm)
+    _seed_room(store, _make_room())
+
+    with caplog.at_level(logging.WARNING, logger="tiri.engine.room_engine"):
+        turn = await engine.chat("r1", "c1", "How many?")
+    assert query.executed == ["SELECT id FROM main.x.t"]
+    assert turn.sql == "SELECT id FROM main.x.t"
+    # No WARNING about model_override should appear.
+    assert not any(
+        "model_override" in r.message for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_model_override_malformed_falls_back_to_router(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An override string missing the `::` separator is invalid. RoomEngine
+    MUST log a WARNING and fall back to the router (not crash the turn)."""
+    import logging
+    llm = _LLM(
+        {
+            "intent": [_intent_json("sql_query", tables=["main.x.t"], confidence=0.9)],
+            "sql": ["SELECT 1"],
+            "viz_summary": ["s"],
+        }
+    )
+    engine, store, query, _v = _build_engine(llm)
+    _seed_room(store, _make_room())
+
+    with caplog.at_level(logging.WARNING, logger="tiri.engine.room_engine"):
+        turn = await engine.chat(
+            "r1", "c1", "q", model_override="missing-separator"
+        )
+    assert turn.error is None
+    assert query.executed == ["SELECT 1"]
+    assert any(
+        "Invalid model_override" in r.message for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_model_override_unknown_backend_falls_back_to_router(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An override referencing a backend not in the registry MUST log a
+    WARNING and fall back to the router."""
+    import logging
+    llm = _LLM(
+        {
+            "intent": [_intent_json("sql_query", tables=["main.x.t"], confidence=0.9)],
+            "sql": ["SELECT 1"],
+            "viz_summary": ["s"],
+        }
+    )
+    engine, store, query, _v = _build_engine(llm, llm_backends={"only-one": _LLM({})})
+    _seed_room(store, _make_room())
+
+    with caplog.at_level(logging.WARNING, logger="tiri.engine.room_engine"):
+        turn = await engine.chat(
+            "r1", "c1", "q", model_override="ghost-backend::any-model"
+        )
+    assert turn.error is None
+    assert query.executed == ["SELECT 1"]
+    assert any(
+        "unknown backend" in r.message for r in caplog.records
+    )

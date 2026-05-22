@@ -1,0 +1,188 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Tiri design tokens.
+ *
+ * Warm-earth palette — a "data tool that belongs in the Databricks
+ * ecosystem" aesthetic, not consumer-app bright. The primary hue is a
+ * stone-brown (HSL ~24°, the witness's stone) which carries through to
+ * accents, ring focus state, and the wordmark.
+ *
+ * All component code references these variables via Tailwind utilities
+ * (bg-primary, text-foreground, border-border, etc.). No hex literals.
+ *
+ * To use: import "./globals.css" once in main.tsx. Light mode is the
+ * default; toggling `data-theme="dark"` on <html> or matching the OS
+ * preference switches to the dark palette.
+ */
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 24 10% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 24 10% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 10% 10%;
+
+    /* Stone brown — Tiri witness primary. */
+    --primary: 24 60% 35%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 24 20% 92%;
+    --secondary-foreground: 24 10% 25%;
+
+    --muted: 24 15% 94%;
+    --muted-foreground: 24 10% 45%;
+
+    --accent: 24 40% 88%;
+    --accent-foreground: 24 10% 15%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 142 70% 35%;
+    --warning: 38 95% 45%;
+
+    --confidence-high: var(--success);
+    --confidence-medium: var(--warning);
+    --confidence-low: var(--destructive);
+
+    /* Provider badge hues. Chosen for distinctness at normal contrast
+     * without clashing with the warm primary. Each is a different family
+     * (violet / amber / sage / slate / steel-blue). */
+    --provider-databricks: 274 45% 50%;
+    --provider-anthropic: 24 80% 50%;
+    --provider-openai: 152 50% 38%;
+    --provider-ollama: 220 8% 45%;
+    --provider-custom: 210 60% 45%;
+
+    --border: 24 15% 88%;
+    --input: 24 15% 90%;
+    --ring: 24 60% 35%;
+
+    --radius: 0.5rem;
+  }
+
+  /* Dark mode kicks in via OS preference OR explicit data-theme="dark". */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --background: 24 10% 8%;
+      --foreground: 24 15% 88%;
+
+      --card: 24 10% 11%;
+      --card-foreground: 24 15% 88%;
+
+      --popover: 24 10% 11%;
+      --popover-foreground: 24 15% 88%;
+
+      --primary: 24 50% 65%;
+      --primary-foreground: 24 10% 8%;
+
+      --secondary: 24 10% 16%;
+      --secondary-foreground: 24 15% 75%;
+
+      --muted: 24 10% 14%;
+      --muted-foreground: 24 10% 55%;
+
+      --accent: 24 15% 20%;
+      --accent-foreground: 24 15% 88%;
+
+      --destructive: 0 60% 50%;
+      --destructive-foreground: 0 0% 98%;
+
+      --success: 142 55% 50%;
+      --warning: 38 90% 55%;
+
+      --provider-databricks: 274 50% 65%;
+      --provider-anthropic: 24 75% 60%;
+      --provider-openai: 152 45% 55%;
+      --provider-ollama: 220 10% 60%;
+      --provider-custom: 210 55% 60%;
+
+      --border: 24 10% 18%;
+      --input: 24 10% 18%;
+      --ring: 24 50% 65%;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --background: 24 10% 8%;
+    --foreground: 24 15% 88%;
+    --card: 24 10% 11%;
+    --card-foreground: 24 15% 88%;
+    --popover: 24 10% 11%;
+    --popover-foreground: 24 15% 88%;
+    --primary: 24 50% 65%;
+    --primary-foreground: 24 10% 8%;
+    --secondary: 24 10% 16%;
+    --secondary-foreground: 24 15% 75%;
+    --muted: 24 10% 14%;
+    --muted-foreground: 24 10% 55%;
+    --accent: 24 15% 20%;
+    --accent-foreground: 24 15% 88%;
+    --destructive: 0 60% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 55% 50%;
+    --warning: 38 90% 55%;
+    --provider-databricks: 274 50% 65%;
+    --provider-anthropic: 24 75% 60%;
+    --provider-openai: 152 45% 55%;
+    --provider-ollama: 220 10% 60%;
+    --provider-custom: 210 55% 60%;
+    --border: 24 10% 18%;
+    --input: 24 10% 18%;
+    --ring: 24 50% 65%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Subtle scrollbar styling — feels finished but not loud. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded bg-muted;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+
+  /* Tiri wordmark — used in the header. */
+  .tiri-wordmark {
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: hsl(var(--primary));
+  }
+}
+
+@layer utilities {
+  /* Reusable confidence styles — used by ConfidenceBadge and any
+   * surface that wants a confidence-tinted left border. */
+  .confidence-tint-high {
+    border-left: 3px solid hsl(var(--confidence-high));
+  }
+  .confidence-tint-medium {
+    border-left: 3px solid hsl(var(--confidence-medium));
+  }
+  .confidence-tint-low {
+    border-left: 3px solid hsl(var(--confidence-low));
+  }
+}

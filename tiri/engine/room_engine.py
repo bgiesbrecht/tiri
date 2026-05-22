@@ -53,6 +53,7 @@ from tiri.engine.agents.synthesis_agent import (
     SynthesisAgent,
     SynthesisError,
 )
+from tiri.container import SingleModelLLMProvider
 from tiri.engine.agents.viz_agent import VizAgent
 from tiri.knowledge.context_builder import ContextBuilder
 from tiri.knowledge.example_indexer import ExampleIndexer
@@ -120,6 +121,7 @@ class RoomEngine:
         store: StoreProvider,
         *,
         mcp_providers: dict[str, MCPProvider] | None = None,
+        llm_backends: dict[str, LLMProvider] | None = None,
         history_window: int = _DEFAULT_HISTORY_WINDOW,
         intent_threshold: float = _DEFAULT_INTENT_THRESHOLD,
         sql_max_retries: int = _DEFAULT_SQL_MAX_RETRIES,
@@ -136,6 +138,13 @@ class RoomEngine:
         # called per request — an entry in this registry is necessary but
         # not sufficient. Empty / None when the deployment has no MCP wiring.
         self._mcp_providers: dict[str, MCPProvider] = dict(mcp_providers or {})
+        # UI: registry of individual LLM backends keyed by provider name (the
+        # `[llm.providers.NAME]` blocks in tiri.toml). Used by the UI's
+        # `model_override` parameter to pin a chat invocation to one
+        # specific `provider::model`, bypassing the per-task router. Empty
+        # dict when not provided — model_override then logs a WARNING and
+        # falls through to the router.
+        self._llm_backends: dict[str, LLMProvider] = dict(llm_backends or {})
         self._history_window = history_window
         self._intent_threshold = intent_threshold
         self._sql_max_retries = sql_max_retries
@@ -149,16 +158,18 @@ class RoomEngine:
         conversation_id: str,
         question: str,
         user_token: str | None = None,
+        model_override: str | None = None,
     ) -> ConversationTurn:
         started = time.monotonic()
         config = await self._load_room_config(room_id)
         history = await self._load_history(conversation_id)
+        llm = self._resolve_llm(model_override)
 
         builder = ContextBuilder(
             catalog=self._catalog,
             metadata_providers=self._metadata_providers,
             query=self._query,
-            llm=self._llm,
+            llm=llm,
             vector=self._vector,
         )
         context = await builder.build(
@@ -174,7 +185,7 @@ class RoomEngine:
         await self._maybe_resolve_mcp(question, config, context)
 
         intent_agent = IntentAgent(
-            self._llm, confidence_threshold=self._intent_threshold
+            llm, confidence_threshold=self._intent_threshold
         )
         intent = await intent_agent.run(question, context)
 
@@ -186,6 +197,7 @@ class RoomEngine:
             conversation_id=conversation_id,
             user_token=user_token,
             started=started,
+            llm=llm,
         )
         await self._persist_turn(room_id, conversation_id, turn)
         return turn
@@ -196,6 +208,7 @@ class RoomEngine:
         conversation_id: str,
         question: str,
         user_token: str | None = None,
+        model_override: str | None = None,
     ) -> AsyncIterator[dict]:
         """SSE-friendly pipeline. Yields status/sql/result/viz/done events.
 
@@ -209,12 +222,14 @@ class RoomEngine:
             yield {"type": "status", "text": "Loading conversation history..."}
             history = await self._load_history(conversation_id)
 
+            llm = self._resolve_llm(model_override)
+
             yield {"type": "status", "text": "Building context..."}
             builder = ContextBuilder(
                 catalog=self._catalog,
                 metadata_providers=self._metadata_providers,
                 query=self._query,
-                llm=self._llm,
+                llm=llm,
                 vector=self._vector,
             )
             context = await builder.build(
@@ -230,7 +245,7 @@ class RoomEngine:
 
             yield {"type": "status", "text": "Classifying question..."}
             intent_agent = IntentAgent(
-                self._llm, confidence_threshold=self._intent_threshold
+                llm, confidence_threshold=self._intent_threshold
             )
             intent = await intent_agent.run(question, context)
 
@@ -248,7 +263,7 @@ class RoomEngine:
                 intent.intent == "clarify_needed"
                 or intent.confidence < self._intent_threshold
             ):
-                clarify_agent = ClarifyAgent(self._llm)
+                clarify_agent = ClarifyAgent(llm)
                 clarify_result = await clarify_agent.run(
                     question, context, intent
                 )
@@ -262,7 +277,7 @@ class RoomEngine:
                 yield {"type": "clarify", "question": clarify_result.question}
             else:
                 yield {"type": "status", "text": "Planning..."}
-                plan = await PlanningAgent(self._llm).plan(question, context)
+                plan = await PlanningAgent(llm).plan(question, context)
                 if len(plan.steps) > 1:
                     yield {
                         "type": "plan",
@@ -278,7 +293,7 @@ class RoomEngine:
                     }
                 try:
                     results = await self._execute_plan(
-                        plan, context, intent, user_token
+                        plan, context, intent, user_token, llm=llm,
                     )
                 except _SQLStepFailure as failure:
                     turn = self._error_turn(
@@ -313,7 +328,7 @@ class RoomEngine:
                                 for s, r in zip(plan.steps, results)
                             ],
                         }
-                    viz_agent = VizAgent(self._llm)
+                    viz_agent = VizAgent(llm)
                     viz_result = await viz_agent.run(
                         question, primary_result, context
                     )
@@ -327,6 +342,7 @@ class RoomEngine:
                         plan=plan,
                         results=results,
                         context=context,
+                        llm=llm,
                     )
                     attached_answer = self._answer_to_attach(plan, synthesized)
                     if attached_answer is not None:
@@ -346,6 +362,7 @@ class RoomEngine:
                         synthesized=synthesized,
                         context=context,
                         config=config,
+                        llm=llm,
                     )
                     if hypothesis_result is not None:
                         yield {
@@ -396,6 +413,7 @@ class RoomEngine:
         conversation_id: str,
         user_token: str | None,
         started: float,
+        llm: LLMProvider,
     ) -> ConversationTurn:
         room_id = config.room_id
 
@@ -412,7 +430,7 @@ class RoomEngine:
             intent.intent == "clarify_needed"
             or intent.confidence < self._intent_threshold
         ):
-            clarify_agent = ClarifyAgent(self._llm)
+            clarify_agent = ClarifyAgent(llm)
             clarify_result = await clarify_agent.run(question, context, intent)
             return self._clarify_turn(
                 room_id=room_id,
@@ -423,10 +441,10 @@ class RoomEngine:
             )
 
         # sql_query path — plan → execute steps → synthesize
-        plan = await PlanningAgent(self._llm).plan(question, context)
+        plan = await PlanningAgent(llm).plan(question, context)
         try:
             results = await self._execute_plan(
-                plan, context, intent, user_token
+                plan, context, intent, user_token, llm=llm,
             )
         except _SQLStepFailure as failure:
             return self._error_turn(
@@ -439,7 +457,7 @@ class RoomEngine:
 
         primary_step = plan.steps[0]
         primary_result = results[0]
-        viz_agent = VizAgent(self._llm)
+        viz_agent = VizAgent(llm)
         viz_result = await viz_agent.run(
             question, primary_result, context
         )
@@ -449,6 +467,7 @@ class RoomEngine:
             plan=plan,
             results=results,
             context=context,
+            llm=llm,
         )
         attached_answer = self._answer_to_attach(plan, synthesized_answer)
 
@@ -459,6 +478,7 @@ class RoomEngine:
             synthesized=synthesized_answer,
             context=context,
             config=config,
+            llm=llm,
         )
 
         return self._sql_turn(
@@ -544,6 +564,48 @@ class RoomEngine:
             duration_ms=int((time.monotonic() - started) * 1000),
         )
 
+    # ── model_override resolution (UI per-question backend pinning) ───────
+
+    def _resolve_llm(self, model_override: str | None) -> LLMProvider:
+        """Resolve the LLM the rest of the chat call will use.
+
+        `model_override` is a `provider::model` string the UI passes when the
+        operator wants this one chat invocation pinned to a specific backend
+        and model (e.g. side-by-side comparison across backends in AskView).
+        When unset, the per-task router is used — the standard production
+        path. When set but malformed or referring to an unknown backend, a
+        WARNING is logged and the router is used — degrades safely rather
+        than failing the chat call over a UI parameter bug.
+
+        Embedding always routes through the original router via
+        `SingleModelLLMProvider.embed_provider=self._llm`. Anthropic and
+        Ollama backends don't support embeddings, so a chat-only override
+        would break ContextBuilder's embed call without this delegation.
+        """
+        if not model_override:
+            return self._llm
+        if "::" not in model_override:
+            _log.warning(
+                "Invalid model_override %r (expected 'provider::model'); "
+                "using router",
+                model_override,
+            )
+            return self._llm
+        backend_name, model = model_override.split("::", 1)
+        backend = self._llm_backends.get(backend_name)
+        if backend is None:
+            _log.warning(
+                "model_override %r references unknown backend %r; using "
+                "router. Registered backends: %s",
+                model_override,
+                backend_name,
+                sorted(self._llm_backends),
+            )
+            return self._llm
+        return SingleModelLLMProvider(
+            backend=backend, model=model, embed_provider=self._llm
+        )
+
     # ── MCP context enrichment (EXT-5) ────────────────────────────────────
 
     async def _maybe_resolve_mcp(
@@ -583,6 +645,8 @@ class RoomEngine:
         context: ContextPackage,
         intent: IntentResult,
         user_token: str | None,
+        *,
+        llm: LLMProvider | None = None,
     ) -> list[QueryResult]:
         """Run SQLAgent once per step in declared order, populating
         `step.sql` and `step.result` as it goes. For MVP execution is
@@ -593,7 +657,9 @@ class RoomEngine:
         through SQLAgent's self-correction loop. The caller turns this into
         an error turn rather than partially executing a broken plan."""
         sql_agent = SQLAgent(
-            self._llm, self._query, max_retries=self._sql_max_retries
+            llm or self._llm,
+            self._query,
+            max_retries=self._sql_max_retries,
         )
         results: list[QueryResult] = []
         for step in plan.steps:
@@ -625,11 +691,12 @@ class RoomEngine:
         plan: ReasoningPlan,
         results: list[QueryResult],
         context: ContextPackage,
+        llm: LLMProvider | None = None,
     ) -> SynthesizedAnswer:
         """SynthesisAgent.synthesize() with logging on failure. The error
         propagates — never silently ship a turn whose synthesis violated
         the causal-language ban."""
-        agent = SynthesisAgent(self._llm)
+        agent = SynthesisAgent(llm or self._llm)
         try:
             return await agent.synthesize(question, plan, results, context)
         except SynthesisError:
@@ -647,6 +714,7 @@ class RoomEngine:
         synthesized: SynthesizedAnswer,
         context: ContextPackage,
         config: RoomConfig,
+        llm: LLMProvider | None = None,
     ) -> HypothesisResult | None:
         """Run HypothesisAgent only when all three gates pass:
 
@@ -673,7 +741,7 @@ class RoomEngine:
             return None
         if not _is_causal_question(question):
             return None
-        agent = HypothesisAgent(self._llm)
+        agent = HypothesisAgent(llm or self._llm)
         try:
             return await agent.run(
                 question=question,

@@ -291,6 +291,202 @@ Serving configurations support this — verify before implementing.
 
 ---
 
+## R11 — SKOS vocabulary support
+
+**Motivated by:** Room authors currently express domain terminology in free-text `text_instruction` and flat `column_overrides` synonym lists. This works but doesn't scale — synonyms are scattered, term hierarchy is implicit, and there is no machine-readable way to express that "top line" means "revenue" which means `SUM(l_extendedprice * (1 - l_discount))`. When an organization already maintains a controlled vocabulary (in Collibra, Purview, a data catalog, or a simple SKOS Turtle file), Tiri should be able to consume it directly rather than requiring the room author to re-express it.
+
+**The gap:** Tiri has no concept of a formal vocabulary. Term resolution happens via LLM — the model infers from `text_instruction` and examples that "top line" might mean revenue. This works until it doesn't. SKOS (W3C Simple Knowledge Organization System) is the standard for controlled vocabularies: preferred labels, alternate labels, scope notes, concept hierarchies, and relationships. It is exactly what `text_instruction` synonym lists are trying to be informally.
+
+**What SKOS provides for Tiri:**
+
+- `skos:prefLabel` — the canonical term the model should use in SQL
+- `skos:altLabel` — synonyms: "top line", "sales", "income" → all resolve to "revenue"
+- `skos:definition` — precise definition injected into the SQL generation prompt
+- `skos:scopeNote` — "don't do this" notes: "Never use o_totalprice — it is pre-discount"
+- `skos:narrower` / `skos:broader` — concept hierarchy: "gross revenue" is narrower than "revenue"
+- `skos:exactMatch` — cross-vocabulary alignment: your "revenue" is the same as the dbt metric "net_revenue"
+
+**Design direction:**
+
+New `RoomConfig` field:
+```python
+vocabulary_uri: str = ""
+# Path to a SKOS Turtle file or SPARQL endpoint.
+# e.g. "./metadata/domain_vocabulary.ttl"
+# e.g. "https://sparql.mycompany.com/vocabulary"
+```
+
+New component: `SkosTermResolver` in `tiri/knowledge/`:
+```python
+class SkosTermResolver:
+    def __init__(self, graph: rdflib.Graph): ...
+
+    def resolve(self, term: str) -> TermResolution | None:
+        """
+        SPARQL query against the SKOS graph.
+        Matches term against skos:prefLabel and skos:altLabel.
+        Returns: canonical label, SQL expression (if defined),
+        definition, scope notes, and related concepts.
+        Returns None if term not found in vocabulary.
+        """
+
+@dataclass
+class TermResolution:
+    canonical_label: str          # skos:prefLabel
+    sql_expression: str | None    # tiri:sqlExpression (Tiri extension property)
+    definition: str               # skos:definition
+    scope_notes: list[str]        # skos:scopeNote — constraints and "don't do this" notes
+    broader: list[str]            # parent concepts
+    narrower: list[str]           # child concepts
+```
+
+`ContextBuilder` calls `SkosTermResolver.resolve()` for each noun phrase in the question before passing to `IntentAgent`. Resolutions are injected into `ContextPackage.mcp_context` (reusing the existing injection mechanism) as structured term definitions the agents can use.
+
+Sample vocabulary (Turtle format):
+```turtle
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix tiri: <https://tiri.databricks.com/vocab#> .
+
+tiri:revenue a skos:Concept ;
+    skos:prefLabel "revenue" ;
+    skos:altLabel "top line", "sales", "income", "net revenue" ;
+    skos:definition "Net revenue after discounts" ;
+    skos:scopeNote "Use lineitem table only. Never use orders.o_totalprice — it is pre-discount." ;
+    tiri:sqlExpression "SUM(l_extendedprice * (1 - l_discount))" ;
+    skos:narrower tiri:grossRevenue ;
+    skos:broader tiri:financialMetric .
+
+tiri:supplier a skos:Concept ;
+    skos:prefLabel "supplier" ;
+    skos:altLabel "vendor", "partner", "source" ;
+    skos:definition "An organization that supplies parts to customers" .
+```
+
+Room authors who already maintain a SKOS vocabulary (or whose organization uses Collibra, Purview, or a similar catalog with SKOS export) can point `vocabulary_uri` at it and get term resolution for free. Authors who don't have one can build a simple Turtle file alongside their room config.
+
+**Dependency:** `rdflib` — pure Python, no external services required for file-based vocabularies. SPARQL endpoint support requires `rdflib-endpoint` or direct HTTP queries.
+
+**Blocking dependency:** None. Purely additive. `SkosTermResolver` is an optional component — rooms without `vocabulary_uri` are completely unaffected.
+
+---
+
+## R12 — OntologyMetadataProvider
+
+**Motivated by:** Enterprise data catalogs (Collibra, Microsoft Purview, Apache Atlas) and semantic layer tools (dbt semantic layer, UC metric views) maintain rich OWL/RDF graphs describing table semantics, data quality, lineage, and business concept definitions. Tiri should be able to consume these graphs as a `MetadataProvider` — turning existing governance investment directly into room quality without requiring room authors to re-express what the catalog already knows.
+
+**The gap:** The existing `MetadataProvider` implementations read from UC annotations, YAML files, Delta tables, and dbt manifests. None of them speak RDF/OWL — the standard format that formal semantic catalogs use. An `OntologyMetadataProvider` fills this gap.
+
+**What OWL/RDF provides beyond SKOS:**
+
+- Class hierarchies and property restrictions — "a customer is a type of party, a party has exactly one country"
+- `owl:equivalentClass` / `owl:sameAs` — formal equivalence between your terms and external ontologies
+- Data quality assertions — "this table is complete", "this column is always non-null"
+- Provenance — where the data came from, who is responsible for it
+- Inferred join paths — `rdfs:domain` and `rdfs:range` on properties describe which tables are related and how
+
+**Design direction:**
+
+New `MetadataProvider` implementation:
+
+```python
+class OntologyMetadataProvider(MetadataProvider):
+    """
+    Reads an OWL/RDFS/RDF graph and produces TableMeta enrichments.
+    Supports local Turtle files, remote SPARQL endpoints, and
+    Collibra/Purview export formats.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        graph: rdflib.Graph | None = None,
+        sparql_endpoint: str | None = None,
+        namespace: str = "https://tiri.databricks.com/vocab#",
+    ): ...
+
+    async def enrich(
+        self,
+        tables: dict[str, TableMeta],
+        room_config: RoomConfig,
+    ) -> None:
+        """
+        SPARQL queries derive:
+        - TableMeta.description from rdfs:comment or skos:definition
+        - TableMeta.grain from tiri:grain annotation
+        - ColumnMeta.description from rdfs:comment on the property
+        - ColumnMeta.synonyms from skos:altLabel on the property
+        - ColumnMeta.semantic_type from tiri:semanticType annotation
+        - TableMeta.recommended_joins from rdfs:domain/rdfs:range relationships
+        - TableMeta.data_quality from tiri:dataQuality assertions
+          (used by SynthesisAgent for confidence calibration)
+        """
+```
+
+**Confidence calibration from data quality assertions:**
+
+OWL can express data quality in a way `SynthesisAgent` can use directly:
+
+```turtle
+tpch:lineitem tiri:dataQuality tiri:Complete .
+tpch:lineitem tiri:dataQuality tiri:CurrentAsOf "daily" .
+
+tpch:forecast tiri:dataQuality tiri:PartiallyStale ;
+    tiri:stalenessNote "Updated monthly. May lag reality by up to 4 weeks." .
+```
+
+A new field on `TableMeta`:
+```python
+@dataclass
+class TableMeta:
+    # ... existing fields ...
+    data_quality: str = ""         # "complete", "partially_stale", "external"
+    data_quality_note: str = ""    # injected into SynthesisAgent prompt
+```
+
+`SynthesisAgent` uses these to calibrate confidence assignment — a result involving a `partially_stale` table is automatically `medium` or `low`, not because of a heuristic, but because the ontology asserts it.
+
+**Join path inference:**
+
+With OWL property domain/range declarations, multi-hop join paths can be inferred rather than enumerated:
+
+```turtle
+tiri:suppliedBy rdfs:domain tpch:partsupp ;
+               rdfs:range  tpch:supplier .
+tiri:locatedIn  rdfs:domain tpch:supplier ;
+               rdfs:range  tpch:nation .
+tiri:regionOf   rdfs:domain tpch:nation ;
+               rdfs:range  tpch:region .
+```
+
+A SPARQL property path query (`tiri:suppliedBy/tiri:locatedIn/tiri:regionOf`) finds the route from `partsupp` to `region` without requiring the room author to declare every hop in `RoomConfig.joins`. This is the long-term resolution of the join enumeration burden — the ontology knows the graph, Tiri traverses it.
+
+**Configuration in `tiri.toml`:**
+```toml
+[[metadata.providers.stack]]
+name     = "enterprise_ontology"
+type     = "ontology"
+source   = "./metadata/enterprise.ttl"    # Turtle file
+# or:
+source   = "https://sparql.mycompany.com" # SPARQL endpoint
+namespace = "https://data.mycompany.com/ontology#"
+```
+
+**Interoperability targets:**
+
+| Catalog | Export format | Integration path |
+|---|---|---|
+| Collibra | RDF/OWL export | Load Turtle file into `OntologyMetadataProvider` |
+| Microsoft Purview | Apache Atlas REST API (RDF-compatible) | HTTP fetch → parse |
+| Apache Atlas | RDF export | Load Turtle file |
+| dbt semantic layer | dbt manifest JSON (not RDF) | Existing `DbtMetadataProvider` |
+| UC metric views | SQL / REST API | Planned `UCMetricViewProvider` |
+
+**Blocking dependency:** R11 (SKOS support) is a natural predecessor — the SKOS vocabulary and the OWL ontology often live in the same graph. Both use `rdflib`. Implementing R11 first means `OntologyMetadataProvider` can reuse the SPARQL infrastructure.
+
+**Dependency:** `rdflib` — same as R11.
+
+---
+
 ## Design principles for this list
 
 When a roadmap item is ready to graduate to [[extensions]]:

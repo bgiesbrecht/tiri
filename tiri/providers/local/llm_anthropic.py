@@ -11,6 +11,15 @@ from tiri.data_models import LLMMessage, LLMResponse
 from tiri.providers.base import LLMProvider, LLMProviderError
 
 
+# Anthropic SDK defaults to a 600s per-request timeout and 2 retries, so a
+# hung request can block for 30 minutes. That's catastrophic for the UI's
+# SSE streaming UX — operators see a spinner with no signal anything went
+# wrong. Cap at 120s per request and a single retry, so a stuck call
+# surfaces as an error within ~4 minutes instead of half an hour.
+_DEFAULT_TIMEOUT_SECONDS = 120.0
+_DEFAULT_MAX_RETRIES = 1
+
+
 class AnthropicLLMProvider(LLMProvider):
     def __init__(
         self,
@@ -22,7 +31,11 @@ class AnthropicLLMProvider(LLMProvider):
         if not api_key and client is None:
             raise LLMProviderError("AnthropicLLMProvider requires api_key")
         self._model = model
-        self._client = client or AsyncAnthropic(api_key=api_key)
+        self._client = client or AsyncAnthropic(
+            api_key=api_key,
+            timeout=_DEFAULT_TIMEOUT_SECONDS,
+            max_retries=_DEFAULT_MAX_RETRIES,
+        )
 
     async def complete(
         self,

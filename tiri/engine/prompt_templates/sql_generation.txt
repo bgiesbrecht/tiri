@@ -16,6 +16,13 @@ If the question cannot be answered, respond with: CANNOT_ANSWER: <one-sentence r
 -- These filters apply to every query in this room regardless of tables used.
 -- If this section is empty, no mandatory filters apply.
 
+## Schema context (catalog.schema-level)
+{schema_context}
+-- High-level notes about the schemas the tables below belong to.
+-- Use this for cross-table constraints (e.g. shared date ranges,
+-- freshness, owner team conventions). "(none)" means no schema-level
+-- metadata has been provided.
+
 ## Available tables (use only these, fully-qualified names)
 {table_schemas}
 -- Format per table:

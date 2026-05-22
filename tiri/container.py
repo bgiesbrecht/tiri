@@ -127,6 +127,64 @@ class RouterLLMProvider(LLMProvider):
         return await route.provider.embed(texts)
 
 
+class SingleModelLLMProvider(LLMProvider):
+    """Routes every task to one concrete backend + model. Used by the UI to
+    pin a single chat invocation to a specific `provider::model` (the
+    `model_override` parameter on the chat / stream_chat APIs), bypassing
+    the per-task routing in `RouterLLMProvider`.
+
+    `embed` is delegated to a separate embedding backend — Anthropic /
+    Ollama don't have embeddings, so a chat-only override would fail
+    embedding calls if we tried to use the same backend for both. The
+    `embed_provider` constructor argument carries through whichever
+    embedding backend the room's RouterLLMProvider would have used.
+    """
+
+    def __init__(
+        self,
+        backend: LLMProvider,
+        model: str,
+        embed_provider: LLMProvider,
+    ) -> None:
+        self._backend = backend
+        self._model = model
+        self._embed_provider = embed_provider
+
+    async def complete(
+        self,
+        messages: list[LLMMessage],
+        temperature: float = 0.0,
+        max_tokens: int = 2048,
+        task: str = "sql",
+        model: str | None = None,
+    ) -> LLMResponse:
+        return await self._backend.complete(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            task=task,
+            model=model or self._model,
+        )
+
+    async def stream(
+        self,
+        messages: list[LLMMessage],
+        temperature: float = 0.0,
+        task: str = "sql",
+        model: str | None = None,
+    ) -> AsyncIterator[str]:
+        async for chunk in self._backend.stream(
+            messages,
+            temperature=temperature,
+            task=task,
+            model=model or self._model,
+        ):
+            yield chunk
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return await self._embed_provider.embed(texts)
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # build_container()
 # ────────────────────────────────────────────────────────────────────────────
@@ -158,8 +216,15 @@ def build_container(cfg: Config) -> dict[str, Any]:
     MCP wiring are unaffected.
     """
     query = _build_query(cfg)
+    router, llm_backends = _build_llm_registry(cfg)
     return {
-        "llm": _build_llm_registry(cfg),
+        "llm": router,
+        "llm_backends": llm_backends,
+        # dict[backend_name, LLMProvider]. Exposed so the UI's per-question
+        # backend override (`model_override` on chat / stream_chat) can wrap
+        # a specific backend in SingleModelLLMProvider. Agents continue to
+        # use the `llm` router; `llm_backends` is only consulted when an
+        # override is requested.
         "catalog": _build_catalog(cfg),
         "metadata_providers": _build_metadata_providers(cfg, query),
         "query": query,
@@ -202,7 +267,9 @@ def _parse_route(
     return backend_name, model_name
 
 
-def _build_llm_registry(cfg: Config) -> RouterLLMProvider:
+def _build_llm_registry(
+    cfg: Config,
+) -> tuple[RouterLLMProvider, dict[str, LLMProvider]]:
     instances: dict[str, LLMProvider] = {}
     for name, bc in cfg.llm_backends.items():
         instances[name] = _instantiate_llm_backend(bc)
@@ -215,7 +282,7 @@ def _build_llm_registry(cfg: Config) -> RouterLLMProvider:
             provider=instances[backend_name],
             model_name=model_name,
         )
-    return RouterLLMProvider(routes=routes)
+    return RouterLLMProvider(routes=routes), instances
 
 
 def _instantiate_llm_backend(bc: ProviderBackendConfig) -> LLMProvider:

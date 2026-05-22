@@ -23,6 +23,7 @@ from tiri.data_models import (
     MCPToolResult,
     QueryResult,
     RoomConfig,
+    SchemaMeta,
     TableMeta,
     VectorMatch,
 )
@@ -249,6 +250,22 @@ class MetadataProvider(ABC):
           - Record MetadataConflict when overriding a non-empty scalar field.
         """
         ...
+
+    async def enrich_schemas(
+        self,
+        schemas: dict[str, SchemaMeta],
+        room_config: RoomConfig,
+    ) -> None:
+        """Enrich SchemaMeta objects in place (default no-op).
+
+        Same merge rules as `enrich`: scalar fields are last-writer-wins,
+        list fields extend, append `self.name` to `metadata_sources` for
+        every schema touched. Providers without schema-level data don't
+        need to implement this — backwards compatibility for the eight
+        in-tree providers and any third-party implementations.
+        """
+        _ = (schemas, room_config)  # default no-op
+        return
 
 
 # ────────────────────────────────────────────────────────────────────────────

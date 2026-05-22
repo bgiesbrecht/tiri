@@ -161,6 +161,31 @@ tiri/
 │   ├── tpch_sales_config.json
 │   └── tpch_supply_config.json
 │
+├── ui/                        ← Vite + React + TS QA / demo UI
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts          ← proxies /rooms, /config, /conversations to :8000 in dev
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── index.html
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx              ← header + 4-tab shell (Rooms, Ask, Benchmarks, History)
+│       ├── globals.css          ← warm-earth design tokens (HSL CSS vars, light + dark)
+│       ├── components/          ← SqlBlock, ResultTable, VegaChart, ConfidenceBadge,
+│       │                          StreamStatus, BackendSelector, CredentialSheet
+│       │   └── ui/              ← shadcn primitives (button, card, tabs, sheet, …)
+│       ├── views/               ← RoomsView, AskView, BenchmarksView, HistoryView,
+│       │                          ResultColumn
+│       ├── hooks/
+│       │   ├── use-sse-stream.ts ← fetch+ReadableStream SSE client (EXT-4 events)
+│       │   └── use-toast.tsx
+│       └── lib/
+│           ├── api.ts            ← REST wrappers + streamUrl()
+│           ├── types.ts          ← SSE event types + ConversationTurn mirror
+│           └── utils.ts
+│   (build output → ui/dist/, gitignored, served by FastAPI at /app)
+│
 ├── pyproject.toml
 ├── tiri.toml.example          ← copy to tiri.toml and fill in your values
 ├── .env.example               ← copy to .env.local for simple env-var config
@@ -284,7 +309,9 @@ Target score: **100% on both rooms** before moving to extensions. The benchmark 
 
 **Unit tests** (`tests/unit/`) — test every function in isolation using mocks for all providers. No network calls, no file I/O. These must run in < 30 seconds total.
 
-**Current state (sanity check at session start):** `pytest tests/unit/ tests/integration/` should report **431 passed, 3 skipped** in ~3s. The 3 skipped are the EXT-6 integration tests (require `INTEGRATION_TESTS=true` + a real Databricks workspace). A different number means either new tests have been added since this checkpoint or something regressed — investigate before doing other work.
+**Current state (sanity check at session start):** `pytest tests/unit/ tests/integration/` should report **467 passed, 3 skipped** in ~3s.
+
+**UI bundle** is at `ui/dist/`, served by FastAPI at `/app`. Build with `cd ui && npm install && npm run build`. If your environment blocks the public npm registry (some corporate networks do), point npm at your org's internal mirror first: `npm config set registry <your-internal-npm-mirror>` — same posture as the pip index-url you almost certainly already have configured. The 3 skipped are the EXT-6 integration tests (require `INTEGRATION_TESTS=true` + a real Databricks workspace). A different number means either new tests have been added since this checkpoint or something regressed — investigate before doing other work.
 
 **Integration tests** (`tests/integration/`) — test against a real Databricks workspace. Mark with `@pytest.mark.integration`. Skip in CI unless `INTEGRATION_TESTS=true` is set.
 

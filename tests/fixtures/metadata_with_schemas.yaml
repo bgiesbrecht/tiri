@@ -1,0 +1,17 @@
+schemas:
+  tpch.sf1:
+    description: "TPC-H benchmark dataset"
+    domain: supply_chain
+    freshness: static
+    owner: "tpch-benchmark"
+    notes: "dates 1992-1998"
+    synonyms:
+      - TPC-H
+      - benchmark
+
+tables:
+  tpch.sf1.lineitem:
+    description: "Line items on customer orders"
+    columns:
+      l_returnflag:
+        description: "Return status"

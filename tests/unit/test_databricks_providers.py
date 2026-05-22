@@ -191,6 +191,87 @@ async def test_llm_complete_retries_without_temperature_on_unsupported() -> None
 
 
 @pytest.mark.asyncio
+async def test_llm_complete_falls_back_to_responses_api_for_gpt5() -> None:
+    """GPT-5 family on Databricks routes through the Responses API
+    (/serving-endpoints/responses), not Chat Completions. The proxy
+    returns HTTP 400 directing us to the alternate endpoint. The
+    provider retries with the Responses API request shape and parses
+    the different response format (output[] with reasoning + message
+    items, content[].output_text holds the text)."""
+    call_log: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_log.append(
+            {
+                "path": request.url.path,
+                "body": json.loads(request.content),
+            }
+        )
+        if request.url.path.endswith("/invocations"):
+            return httpx.Response(
+                400,
+                json={
+                    "error_code": "BAD_REQUEST",
+                    "message": (
+                        "Model databricks-gpt-5-5-pro only supports the "
+                        "Responses API. Please use "
+                        "/serving-endpoints/responses or "
+                        "/serving-endpoints/open-responses instead."
+                    ),
+                },
+            )
+        # Responses API path — return GPT-5 shape
+        return httpx.Response(
+            200,
+            json={
+                "object": "response",
+                "status": "completed",
+                "model": "gpt-5.5-pro-2026-04-23",
+                "usage": {
+                    "input_tokens": 42,
+                    "output_tokens": 8,
+                    "output_tokens_details": {"reasoning_tokens": 5},
+                    "total_tokens": 50,
+                },
+                "output": [
+                    {"type": "reasoning", "summary": []},
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": "FINAL"}
+                        ],
+                    },
+                ],
+            },
+        )
+
+    provider = DatabricksLLMProvider(
+        host=HOST,
+        token=TOKEN,
+        completion_endpoint="databricks-gpt-5-5-pro",
+        client=_make_client(handler),
+    )
+    response = await provider.complete(
+        [LLMMessage(role="system", content="instructions")]
+    )
+    # Two calls: first to Chat Completions (400), second to Responses API
+    assert len(call_log) == 2
+    assert call_log[0]["path"].endswith("/invocations")
+    assert call_log[1]["path"] == "/serving-endpoints/responses"
+    # Responses API body uses `input` not `messages`, `max_output_tokens`
+    # not `max_tokens`, and `model` in the body
+    rb = call_log[1]["body"]
+    assert "input" in rb and "messages" not in rb
+    assert "max_output_tokens" in rb and "max_tokens" not in rb
+    assert rb["model"] == "databricks-gpt-5-5-pro"
+    # Responses-shape content extracted, reasoning item skipped
+    assert response.content == "FINAL"
+    # Usage keys translated to Chat Completions shape
+    assert response.usage == {"prompt_tokens": 42, "completion_tokens": 8}
+
+
+@pytest.mark.asyncio
 async def test_llm_complete_other_400_errors_still_raise() -> None:
     """The temperature-retry path MUST NOT swallow other 400 errors."""
 
