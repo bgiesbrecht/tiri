@@ -42,6 +42,9 @@ data/
 ui/dist/
 ui/node_modules/
 ui/.vite/
+ui/*.tsbuildinfo
+ui/vite.config.d.ts
+ui/vite.config.js
 
 # OS junk
 .DS_Store

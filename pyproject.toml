@@ -1,6 +1,6 @@
 [project]
 name = "tiri"
-version = "0.0.1"
+version = "0.1.0"
 description = "Tiri — a data reasoning system over Databricks data"
 requires-python = ">=3.11"
 dependencies = []
