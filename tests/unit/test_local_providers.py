@@ -265,6 +265,83 @@ async def test_anthropic_complete_calls_sdk_with_split_system_messages(monkeypat
     assert captured["kwargs"]["messages"] == [{"role": "user", "content": "hi"}]
 
 
+@pytest.mark.asyncio
+async def test_anthropic_complete_injects_placeholder_user_when_system_only() -> None:
+    """Tiri's agents pass a single system LLMMessage containing the entire
+    prompt. Anthropic SDK ≥ 0.50 rejects `messages: []` with
+    'messages: at least one message is required'. The provider injects a
+    placeholder user turn so system-only prompts work; OpenAI / Databricks
+    / Ollama accept system-only and ignore the user-side normalization."""
+    captured: dict[str, Any] = {}
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.messages = self
+
+        async def create(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+            class R:
+                class _Usage:
+                    input_tokens = 1
+                    output_tokens = 1
+
+                class _Block:
+                    text = "ok"
+
+                content = [_Block()]
+                usage = _Usage()
+
+            return R()
+
+    fake = _FakeClient()
+    p = AnthropicLLMProvider(api_key="sk-x", client=fake)  # type: ignore[arg-type]
+    # Tiri's typical agent pattern: ONLY a system message.
+    await p.complete([LLMMessage(role="system", content="follow instructions")])
+    assert captured["kwargs"]["system"] == "follow instructions"
+    msgs = captured["kwargs"]["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"]  # non-empty
+
+
+@pytest.mark.asyncio
+async def test_anthropic_complete_omits_system_kwarg_when_absent() -> None:
+    """Caught during live validation against Anthropic SDK 0.102.0:
+    passing `system=None` is rejected with 'system: Input should be a
+    valid array'. The provider MUST omit the kwarg entirely rather than
+    passing None when there are no system messages."""
+    captured: dict[str, Any] = {}
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.messages = self
+
+        async def create(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+            class R:
+                class _Usage:
+                    input_tokens = 1
+                    output_tokens = 1
+
+                class _Block:
+                    text = "ok"
+
+                content = [_Block()]
+                usage = _Usage()
+
+            return R()
+
+    fake = _FakeClient()
+    p = AnthropicLLMProvider(api_key="sk-x", client=fake)  # type: ignore[arg-type]
+    # Only a user message — no system. Provider must NOT pass system=None.
+    await p.complete([LLMMessage(role="user", content="hi")])
+    assert "system" not in captured["kwargs"], (
+        f"system kwarg leaked through: {captured['kwargs']!r}"
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # OllamaLLMProvider — case 8 (HTTP-mocked)
 # ═══════════════════════════════════════════════════════════════════════════

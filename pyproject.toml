@@ -6,6 +6,13 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
+production = [
+    "httpx>=0.27",
+    "databricks-sdk>=0.30",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pyyaml>=6.0",
+]
 databricks = [
     "httpx>=0.27",
     "databricks-sdk>=0.30",

@@ -284,7 +284,7 @@ Target score: **100% on both rooms** before moving to extensions. The benchmark 
 
 **Unit tests** (`tests/unit/`) — test every function in isolation using mocks for all providers. No network calls, no file I/O. These must run in < 30 seconds total.
 
-**Current state (sanity check at session start):** `pytest tests/unit/ tests/integration/` should report **426 passed, 3 skipped** in ~3s. The 3 skipped are the EXT-6 integration tests (require `INTEGRATION_TESTS=true` + a real Databricks workspace). A different number means either new tests have been added since this checkpoint or something regressed — investigate before doing other work.
+**Current state (sanity check at session start):** `pytest tests/unit/ tests/integration/` should report **428 passed, 3 skipped** in ~3s. The 3 skipped are the EXT-6 integration tests (require `INTEGRATION_TESTS=true` + a real Databricks workspace). A different number means either new tests have been added since this checkpoint or something regressed — investigate before doing other work.
 
 **Integration tests** (`tests/integration/`) — test against a real Databricks workspace. Mark with `@pytest.mark.integration`. Skip in CI unless `INTEGRATION_TESTS=true` is set.
 
@@ -378,6 +378,7 @@ Definition of Done results (validated against live Databricks workspace `<your-w
 |---|---|---|
 | `tpch-sales` | **5/5 100% ✅** | All benchmarks pass on both Databricks (llama-3-1-8b / llama-3-3-70b mixed routing) and a self-hosted Ollama endpoint (qwen2.5-coder:14b + qwen2.5:14b-instruct) |
 | `tpch-supply` | **3/5 60%** | 2 remaining failures are irreducible semantic gaps, not Tiri code bugs. Both 70B Llama and 14B qwen interpret the questions differently from the benchmark's `expected_sql`: (1) `5e757fe8…` — "highest account balance AND supply the most parts" — the agent ranks suppliers but doesn't add the `COUNT(ps_partkey)` aggregation; (2) `ff04dceff…` — "minimum supply cost across all suppliers" — agent returns one row per part (200k rows), benchmark expected adds an implicit top-N filter (20 rows). Resolution requires example-engineering on the supply room, not engine changes. |
+| Anthropic Sonnet 4.6 | sales 4/5, supply 2/5 | More conservative IntentAgent routing — routes 2 well-formed questions to ClarifyAgent. Same 2 underlying semantic gaps as other backends. Non-determinism at `temperature=0` observed (2/5 → 4/5 on re-run). |
 
 **Full stack validated end-to-end:**
 - `DatabricksLLMProvider` (completions + embed via Model Serving)
@@ -394,6 +395,7 @@ Definition of Done results (validated against live Databricks workspace `<your-w
 2. `Config._from_toml` didn't env-fall-through for Databricks LLM backends — now does.
 3. `VizAgent` crashed the turn on summary LLM failure (Databricks guardrail false-positive) — now degrades to empty summary, regression test added.
 4. `SQLAgent` didn't strip markdown fences from model output (qwen2.5-coder wraps SQL in ```` ```sql ... ``` ````) — now strips, parametrized regression test added.
+5. `AnthropicLLMProvider`: `system=None` rejected by SDK ≥ 0.50 — kwarg now omitted when no system content. Empty `messages` array rejected by Anthropic API — `_split_messages` injects a `"Proceed."` placeholder when all content is in the system message. Both have parametrized regression tests. Also extended `Config._from_toml` env-fallthrough to `anthropic` / `openai` / `ollama` backends (was Databricks-only).
 
 **Open items:** see `fixme.md` (10 entries, no blockers). Notably `M2` documents the LLM-guardrail-vs-row-data tension and the recommended `viz_summary` routing posture for production.
 

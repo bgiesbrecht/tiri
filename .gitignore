@@ -23,6 +23,9 @@ docs/.obsidian/
 tiri.toml
 token
 token.txt
+anthropic_key
+openai_key
+*_key
 *.pem
 *.key
 # docs/temp_instructions contains a historical workspace token + ad-hoc

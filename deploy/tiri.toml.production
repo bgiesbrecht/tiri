@@ -1,0 +1,42 @@
+# tiri.toml — Databricks Apps production configuration.
+#
+# All providers on Databricks. Copy this to tiri.toml in the repo root
+# before deploying. The actual tiri.toml is gitignored; this sample is
+# committed so the wiring is documented and version-controlled.
+#
+# Secrets come from environment variables injected by the Apps runtime
+# (see app.yaml) or from your shell for local testing against production.
+# This file describes wiring only — no credentials here.
+
+[llm.providers.db]
+type = "databricks"
+# host and token fall through from DATABRICKS_HOST / DATABRICKS_TOKEN
+
+[llm.routing]
+intent      = "db::databricks-meta-llama-3-1-8b-instruct"
+planning    = "db::databricks-meta-llama-3-3-70b-instruct"
+sql         = "db::databricks-meta-llama-3-3-70b-instruct"
+synthesis   = "db::databricks-meta-llama-3-3-70b-instruct"
+clarify     = "db::databricks-meta-llama-3-1-8b-instruct"
+viz_summary = "db::databricks-meta-llama-3-3-70b-instruct"
+embed       = "db::databricks-bge-large-en"
+
+# viz_summary intentionally routes to 70B — see fixme M2.
+# The 8B output guardrail fires on geopolitical content in row data.
+# Cost delta for one-sentence summaries is negligible.
+
+[providers.catalog]
+type = "databricks"
+
+[providers.query]
+type = "databricks"
+# warehouse_id falls through from DB_WAREHOUSE_ID env var
+
+[providers.vector]
+type     = "databricks"
+# endpoint falls through from DB_VECTOR_ENDPOINT env var
+# index    falls through from DB_VECTOR_INDEX env var (default: main.tiri.example_index)
+
+[providers.store]
+type  = "databricks"
+# table falls through from DB_STORE_TABLE env var (default: main.tiri.kv_store)

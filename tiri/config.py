@@ -154,20 +154,27 @@ class Config:
             backend_type = cfg_dict.get("type", "")
             host = cfg_dict.get("host", "")
             token = cfg_dict.get("token", "")
-            # When a `databricks` backend declares no host/token in TOML,
-            # fall through to the env-level DATABRICKS_HOST / DATABRICKS_TOKEN.
-            # Mirrors how db_warehouse_id already falls through. Keeps secrets
-            # out of TOML — tiri.toml describes wiring; env carries credentials.
+            api_key = cfg_dict.get("api_key", "")
+            base_url = cfg_dict.get("base_url", "")
+            # When credentials are missing from TOML, fall through to the
+            # provider-specific env var (DATABRICKS_HOST/TOKEN,
+            # ANTHROPIC_API_KEY, OPENAI_API_KEY, OLLAMA_BASE_URL). Keeps
+            # secrets out of TOML — tiri.toml describes wiring; env carries
+            # credentials.
             if backend_type == "databricks":
                 host = host or os.environ.get("DATABRICKS_HOST", "")
                 token = token or os.environ.get("DATABRICKS_TOKEN", "")
+            elif backend_type in ("anthropic", "openai"):
+                api_key = api_key or _env_for_provider_api_key(backend_type)
+            elif backend_type == "ollama":
+                base_url = base_url or os.environ.get("OLLAMA_BASE_URL", "")
             backends[name] = ProviderBackendConfig(
                 name=name,
                 type=backend_type,
                 host=host,
                 token=token,
-                api_key=cfg_dict.get("api_key", ""),
-                base_url=cfg_dict.get("base_url", ""),
+                api_key=api_key,
+                base_url=base_url,
             )
 
         # [llm.routing]

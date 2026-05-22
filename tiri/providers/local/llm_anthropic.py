@@ -34,14 +34,19 @@ class AnthropicLLMProvider(LLMProvider):
     ) -> LLMResponse:
         chosen_model = model or self._model
         system_text, anth_messages = _split_messages(messages)
+        # The Anthropic SDK ≥ 0.50 rejects `system=None` with
+        # "system: Input should be a valid array". Omit the kwarg entirely
+        # when there's no system content rather than passing None.
+        kwargs: dict = {
+            "model": chosen_model,
+            "messages": anth_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if system_text:
+            kwargs["system"] = system_text
         try:
-            response = await self._client.messages.create(
-                model=chosen_model,
-                system=system_text or None,
-                messages=anth_messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            response = await self._client.messages.create(**kwargs)
         except (RateLimitError, APIStatusError, APIError, AnthropicError) as e:
             raise LLMProviderError(f"Anthropic completion failed: {e}") from e
 
@@ -61,14 +66,18 @@ class AnthropicLLMProvider(LLMProvider):
     ) -> AsyncIterator[str]:
         chosen_model = model or self._model
         system_text, anth_messages = _split_messages(messages)
+        # See note in complete() — `system=None` is rejected by the modern
+        # Anthropic SDK; omit the kwarg entirely when absent.
+        kwargs: dict = {
+            "model": chosen_model,
+            "messages": anth_messages,
+            "temperature": temperature,
+            "max_tokens": 2048,
+        }
+        if system_text:
+            kwargs["system"] = system_text
         try:
-            async with self._client.messages.stream(
-                model=chosen_model,
-                system=system_text or None,
-                messages=anth_messages,
-                temperature=temperature,
-                max_tokens=2048,
-            ) as stream:
+            async with self._client.messages.stream(**kwargs) as stream:
                 async for text in stream.text_stream:
                     yield text
         except (RateLimitError, APIStatusError, APIError, AnthropicError) as e:
@@ -84,7 +93,19 @@ class AnthropicLLMProvider(LLMProvider):
 def _split_messages(
     messages: list[LLMMessage],
 ) -> tuple[str, list[dict]]:
-    """Anthropic takes system text separately; user/assistant in messages list."""
+    """Anthropic takes system text separately; user/assistant in messages list.
+
+    Anthropic also requires `messages` to be non-empty — system-only prompts
+    raise `messages: at least one message is required`. Tiri's agents (Intent,
+    Clarify, Planning, Synthesis, VizAgent summary, HypothesisAgent) all pass
+    a single system message containing the entire prompt including the
+    question. To keep that shape working with Anthropic, we inject a
+    placeholder user turn when no user/assistant messages are present —
+    the model already has all the actual instructions in `system`.
+
+    OpenAI, Databricks Model Serving, and Ollama all accept system-only
+    messages, so this normalization is Anthropic-specific.
+    """
     system_parts: list[str] = []
     anth_messages: list[dict] = []
     for m in messages:
@@ -92,6 +113,8 @@ def _split_messages(
             system_parts.append(m.content)
         else:
             anth_messages.append({"role": m.role, "content": m.content})
+    if not anth_messages:
+        anth_messages = [{"role": "user", "content": "Proceed."}]
     return ("\n\n".join(system_parts).strip(), anth_messages)
 
 

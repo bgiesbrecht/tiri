@@ -1,0 +1,37 @@
+# Databricks Apps manifest for Tiri.
+#
+# Deploy with:
+#   databricks apps create tiri --description "Tiri data reasoning system"
+#   databricks apps deploy tiri --source-code-path .
+#
+# Secrets must be created in the workspace before deploying:
+#   databricks secrets create-scope tiri
+#   databricks secrets put-secret tiri warehouse_id    --string-value <id>
+#   databricks secrets put-secret tiri vector_endpoint --string-value <name>
+#
+# DATABRICKS_HOST and DATABRICKS_TOKEN are injected automatically by the
+# Apps runtime — do not add them as secrets.
+
+command:
+  - uvicorn
+  - tiri.api.main:app
+  - --host
+  - "0.0.0.0"
+  - --port
+  - "8000"
+
+env:
+  - name: DB_WAREHOUSE_ID
+    valueFrom:
+      secretRef:
+        scope: tiri
+        key: warehouse_id
+  - name: DB_VECTOR_ENDPOINT
+    valueFrom:
+      secretRef:
+        scope: tiri
+        key: vector_endpoint
+  - name: DB_VECTOR_INDEX
+    value: "main.tiri.example_index"
+  - name: DB_STORE_TABLE
+    value: "main.tiri.kv_store"
